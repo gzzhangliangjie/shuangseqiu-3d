@@ -3,13 +3,13 @@
 const R_BALL = 0.20, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discDX:0.55, discR:0.50, discY:2.95,
-    inletHalf:55*Math.PI/180, exitHalf:30*Math.PI/180, exitDir:[0,-0.868,0.496],
-    chuteZ0:0.9, chuteTopY:2.42, chuteSlope:0.75, chuteZ1:2.9,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discDX:0.52, discR:0.48, discY:3.05,
+    inletHalf:47*Math.PI/180, exitHalf:17*Math.PI/180, exitDir:[0,-0.75,0.66],
+    chuteZ0:1.0, chuteTopY:2.35, chuteSlope:0.72, chuteZ1:2.9,
     chanZ:3.45, chanBaseY:0.92, rollDir:-1, stopX:-7.0, chanX1:-7.5, chanX2:-2.6, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discDX:0.55, discR:0.50, discY:2.95,
-    inletHalf:55*Math.PI/180, exitHalf:32*Math.PI/180, exitDir:[0,-0.848,0.53],
-    chuteZ0:0.9, chuteTopY:2.42, chuteSlope:0.75, chuteZ1:2.9,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discDX:0.52, discR:0.48, discY:3.05,
+    inletHalf:47*Math.PI/180, exitHalf:17*Math.PI/180, exitDir:[0,-0.75,0.66],
+    chuteZ0:1.0, chuteTopY:2.35, chuteSlope:0.72, chuteZ1:2.9,
     chanZ:3.45, chanBaseY:0.92, rollDir:1, stopX:7.0, chanX1:2.6, chanX2:7.5, draws:1 },
 ];
 
