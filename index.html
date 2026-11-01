@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双色球 · Myosotis 摇奖机（真机结构复刻）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    background: radial-gradient(ellipse at 50% 18%, #17224a 0%, #0b1026 55%, #060913 100%);
+    font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+    color: #e8ecf8; user-select: none;
+  }
+  canvas { display: block; }
+  #hud { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); text-align: center; z-index: 10; pointer-events: none; }
+  #title {
+    font-size: 25px; font-weight: 700; letter-spacing: 4px;
+    background: linear-gradient(90deg, #ff8a8a, #ffd28a, #8ab8ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #results { display: flex; gap: 13px; justify-content: center; margin-top: 14px; }
+  .slot {
+    width: 54px; height: 54px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 25px; font-weight: 800;
+    background: rgba(255,255,255,.06);
+    border: 2px dashed rgba(255,255,255,.22);
+    color: rgba(255,255,255,.28); transition: all .25s;
+  }
+  .slot.filled { border-style: solid; color: #fff; box-shadow: 0 0 22px rgba(0,0,0,.5); }
+  .slot.red.filled { background: radial-gradient(circle at 35% 30%, #ff7a6e, #c62828 70%); border-color: #ff9a8f; }
+  .slot.blue.filled { background: radial-gradient(circle at 35% 30%, #6fa8ff, #0d47a1 70%); border-color: #9cc0ff; }
+  .slot.pop { animation: pop .5s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes pop { 0% { transform: scale(.2); } 100% { transform: scale(1); } }
+  #phase { margin-top: 12px; font-size: 15px; color: #aebbe0; letter-spacing: 2px; min-height: 22px; }
+  #phase.active { color: #ffd28a; text-shadow: 0 0 12px rgba(255,180,80,.4); }
+  #controls { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; z-index: 10; }
+  button {
+    padding: 12px 34px; font-size: 17px; font-weight: 700; letter-spacing: 3px;
+    border-radius: 28px; border: 1px solid rgba(255,255,255,.25);
+    cursor: pointer; transition: all .2s; color: #fff;
+  }
+  #startBtn { background: linear-gradient(135deg, #e53935, #b71c1c); box-shadow: 0 4px 24px rgba(229,57,53,.45); }
+  #startBtn:hover:not(:disabled) { transform: translateY(-2px); }
+  #resetBtn { background: rgba(255,255,255,.08); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  #tip { position: fixed; bottom: 10px; right: 16px; font-size: 12px; color: rgba(255,255,255,.35); z-index: 10; }
+  #legend {
+    position: fixed; top: 16px; left: 18px; font-size: 12.5px; line-height: 1.85;
+    color: rgba(255,255,255,.55); z-index: 10;
+  }
+  #legend b { color: #fff; }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="title">双色球 · Myosotis 摇奖机</div>
+  <div id="results"></div>
+  <div id="phase">点击「开始摇奖」</div>
+</div>
+<div id="legend">
+  <div><b>真机结构（法国 RYO CATTEAU · Myosotis）</b></div>
+  <div>① 号码球预览架（顶部，球平时停放处）</div>
+  <div>② 球状搅拌室（Ø70cm）+ 底部双向旋转双搅拌盘</div>
+  <div>③ 出球口档杆 → 出球轨道</div>
+  <div>④ 底座（PLC / 电机 / 变频器）</div>
+  <div style="opacity:.7;margin-top:4px">流程：预览架落球 → 双盘搅拌 → 出球口开 → 轨道滚出</div>
+</div>
+<div id="controls">
+  <button id="startBtn">开始摇奖</button>
+  <button id="resetBtn">重 置</button>
+</div>
+<div id="tip">拖拽旋转视角 · 滚轮缩放</div>
+
+<script>
+/* 运行时错误直接显示在页面提示栏，避免整页黑掉无提示 */
+window.addEventListener('error', e => {
+  const p = document.getElementById('phase');
+  if (p) { p.textContent = '⚠ 页面错误: ' + e.message; p.className = 'active'; }
+});
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+/* ================= 场景基础 ================= */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x0b1026, 34, 90);
+
+/* 环境反射（PBR 质感的关键） */
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+camera.position.set(0, 5.6, 16.8);
+
+/* 后期：轻辉光 */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.38, 0.55, 0.82);
+composer.addPass(bloom);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 3.6, 0);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.52;
+controls.minDistance = 7;
+controls.maxDistance = 40;
+
+scene.add(new THREE.HemisphereLight(0x9db0ff, 0x1a2038, 0.9));
+const dir1 = new THREE.DirectionalLight(0xffffff, 1.35); dir1.position.set(7, 14, 9); scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0x7f9dff, 0.5); dir2.position.set(-9, 7, -7); scene.add(dir2);
+
+/* 展台 */
+const plat = new THREE.Mesh(
+  new THREE.CylinderGeometry(12, 12.6, 0.6, 64),
+  new THREE.MeshStandardMaterial({ color: 0x1c2444, roughness: 0.55, metalness: 0.35 })
+);
+plat.position.y = -0.3; scene.add(plat);
+const rim = new THREE.Mesh(
+  new THREE.TorusGeometry(12, 0.07, 10, 80),
+  new THREE.MeshStandardMaterial({ color: 0x1a2248, emissive: 0x3a5cff, emissiveIntensity: 1.4, metalness: 0.8, roughness: 0.3 })
+);
+rim.rotation.x = Math.PI / 2; rim.position.y = 0.02; scene.add(rim);
+const rim2 = new THREE.Mesh(
+  new THREE.TorusGeometry(9.5, 0.03, 8, 80),
+  new THREE.MeshStandardMaterial({ color: 0x111630, emissive: 0x2a3f9f, emissiveIntensity: 1.0, metalness: 0.8, roughness: 0.35 })
+);
+rim2.rotation.x = Math.PI / 2; rim2.position.y = 0.02; scene.add(rim2);
+
+/* 星空背景 */
+{
+  const N = 700, pos = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    const r = 45 + Math.random() * 35, th = Math.random() * Math.PI * 2, ph = Math.acos(Math.random() * 0.9);
+    pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+    pos[i * 3 + 1] = r * Math.cos(ph) * 0.6 + 6;
+    pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0x9db4ff, size: 0.14, transparent: true, opacity: 0.75, fog: false })));
+}
+
+/* ================= 物理常量 ================= */
+const R_BALL = 0.30;            /* 真球Ø50mm / 搅拌室Ø700mm，视觉取 1:5 */
+const G = 22;
+const REST_BALL = 0.55;         /* 实心橡胶球，弹性好 */
+const REST_WALL = 0.62;
+const DT = 1 / 120;
+
+const machines = [];
+const metalMat = new THREE.MeshStandardMaterial({ color: 0xb9c3e2, metalness: 1, roughness: 0.2, envMapIntensity: 1.3 });
+const goldMat  = new THREE.MeshStandardMaterial({ color: 0xd9b45a, metalness: 1, roughness: 0.24, envMapIntensity: 1.35 });
+const darkMat  = new THREE.MeshStandardMaterial({ color: 0x1a2142, roughness: 0.32, metalness: 0.7 });
+const glassMat = new THREE.MeshPhysicalMaterial({
+  color: 0xaaccff, metalness: 0, roughness: 0.05,
+  transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false,
+  clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.2
+});
+const acrylicMat = new THREE.MeshPhysicalMaterial({
+  color: 0xbfd8ff, metalness: 0, roughness: 0.08,
+  transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false,
+  clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 1.1
+});
+
+/* ============ 真机结构参数（上半部：预览架/搅拌室/出球轨道，下半部：底座） ============ */
+const MACH_CFG = [
+  {
+    key: 'red', cx: -4.4, cz: 0, count: 33, color: '#d0342c', label: '1 号机 · 红球区',
+    R: 1.55, cy: 4.15, baseW: 3.2, baseH: 2.6, baseD: 1.5,
+    inletHalf: 32 * Math.PI / 180,             /* 搅拌室顶部入球口 */
+    exitHalf: 26 * Math.PI / 180,              /* 出球口：贴着球堆（底部前偏 30°），档杆一开球堆里的球直接落出 */
+    exitDir: new THREE.Vector3(0, -0.868, 0.496),
+    discDX: 0.72, discR: 0.8, discY: 3.15,
+    rackRows: [7, 7, 7, 7, 5], rackDX: 0.62, rackZ0: -1.24, rackDZ: 0.62, rackY: 6.5, rackTilt: 0.18,
+    chuteZ0: 0.95, chuteTopY: 2.45, chuteSlope: 0.60, chuteZ1: 3.3,
+    chanZ: 3.9, chanHalfW: 0.42, chanBaseY: 1.05,
+    rollDir: -1, stopX: -6.95, chanX1: -7.5, chanX2: -1.4, entryX: -4.4
+  },
+  {
+    key: 'blue', cx: 4.4, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
+    R: 1.25, cy: 4.0, baseW: 2.8, baseH: 2.75, baseD: 1.5,
+    inletHalf: 32 * Math.PI / 180,
+    exitHalf: 28 * Math.PI / 180,
+    exitDir: new THREE.Vector3(0, -0.868, 0.496),
+    discDX: 0.6, discR: 0.65, discY: 3.0,
+    rackRows: [4, 4, 4, 4], rackDX: 0.62, rackZ0: -0.93, rackDZ: 0.62, rackY: 6.1, rackTilt: 0.18,
+    chuteZ0: 0.95, chuteTopY: 2.5, chuteSlope: 0.64, chuteZ1: 3.3,
+    chanZ: 3.9, chanHalfW: 0.42, chanBaseY: 1.0,
+    rollDir: 1, stopX: 6.95, chanX1: 1.6, chanX2: 7.5, entryX: 4.4
+  },
+];
+
+/* ================= 号码球贴图：4 个白圆片号码（每 90° 一个） ================= */
+function makeBallMesh(num, color) {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = color; ctx.fillRect(0, 0, 512, 256);
+  const grad = ctx.createRadialGradient(160, 70, 20, 256, 128, 280);
+  grad.addColorStop(0, 'rgba(255,255,255,.30)'); grad.addColorStop(1, 'rgba(0,0,0,.22)');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, 512, 256);
+  for (const cx of [64, 192, 320, 448]) {
+    const disc = ctx.createRadialGradient(cx - 14, 114, 6, cx, 128, 58);
+    disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.8, '#f2f2f2'); disc.addColorStop(1, '#d8d8d8');
+    ctx.fillStyle = disc;
+    ctx.beginPath(); ctx.arc(cx, 128, 54, 0, Math.PI * 2); ctx.fill();
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.stroke();
+    ctx.fillStyle = color;
+    ctx.font = 'bold 76px Arial';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(num, cx, 132);
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(R_BALL, 28, 28),
+    new THREE.MeshPhysicalMaterial({ map: tex, roughness: 0.26, metalness: 0.0, clearcoat: 1, clearcoatRoughness: 0.12, envMapIntensity: 0.9 })
+  );
+}
+
+/* ================= 底座铭牌 ================= */
+function makeLabel(text) {
+  const cv = document.createElement('canvas'); cv.width = 512; cv.height = 128;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#141a36'; ctx.fillRect(0, 0, 512, 128);
+  ctx.strokeStyle = '#8a743a'; ctx.lineWidth = 6; ctx.strokeRect(8, 8, 496, 112);
+  ctx.fillStyle = '#ffd28a'; ctx.font = 'bold 52px "Microsoft YaHei", Arial';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 256, 52);
+  ctx.fillStyle = '#9fb2e8'; ctx.font = '28px Arial';
+  ctx.fillText('RYO CATTEAU · Myosotis', 256, 96);
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/* ================= 构建真机结构 ================= */
+function buildMachine(cfg) {
+  const group = new THREE.Group();
+  const { cx, cz, R, cy } = cfg;
+
+  /* ---- 下半部分：底座（PLC/电机/变频器 内藏） ---- */
+  const base = new THREE.Mesh(new THREE.BoxGeometry(cfg.baseW, cfg.baseH, cfg.baseD), darkMat);
+  base.position.set(0, cfg.baseH / 2, 0); group.add(base);
+  const baseTop = new THREE.Mesh(new THREE.BoxGeometry(cfg.baseW + 0.24, 0.12, cfg.baseD + 0.24), metalMat);
+  baseTop.position.set(0, cfg.baseH + 0.06, 0); group.add(baseTop);
+  for (const px of [-1, 1]) {                         /* 底座正面装饰缝 */
+    const seam = new THREE.Mesh(new THREE.BoxGeometry(0.03, cfg.baseH - 0.5, 0.02), metalMat);
+    seam.position.set(px * cfg.baseW * 0.28, cfg.baseH / 2, cfg.baseD / 2 + 0.01); group.add(seam);
+  }
+  const label = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.48),
+    new THREE.MeshStandardMaterial({ map: makeLabel(cfg.label), roughness: 0.5, emissive: 0x223466, emissiveIntensity: 0.5 }));
+  label.position.set(0, cfg.baseH * 0.42, cfg.baseD / 2 + 0.02); group.add(label);
+
+  /* 底座发光饰条（红机红光 / 蓝机蓝光） */
+  const accent = new THREE.MeshStandardMaterial({
+    color: 0x101528,
+    emissive: cfg.key === 'red' ? 0xff2d3f : 0x2f7bff, emissiveIntensity: 2.2, roughness: 0.4
+  });
+  const stripF = new THREE.Mesh(new THREE.BoxGeometry(cfg.baseW - 0.36, 0.05, 0.02), accent);
+  stripF.position.set(0, cfg.baseH - 0.22, cfg.baseD / 2 + 0.012); group.add(stripF);
+  for (const sx of [-1, 1]) {
+    const stripS = new THREE.Mesh(new THREE.BoxGeometry(0.03, cfg.baseH - 0.6, 0.03), accent);
+    stripS.position.set(sx * (cfg.baseW / 2 + 0.013), cfg.baseH / 2 + 0.1, 0); group.add(stripS);
+  }
+
+  /* ---- 球状搅拌室：顶部入球口 + 下前方出球口（真挖洞） ---- */
+  const cosInlet = Math.cos(cfg.inletHalf);
+  const cosExit = Math.cos(cfg.exitHalf);
+  const t0 = cfg.inletHalf, t1 = Math.PI - cfg.exitHalf * 1.15;   /* 主体环带（纬度角） */
+  const main = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32, 0, Math.PI * 2, t0, t1 - t0), glassMat);
+  main.renderOrder = 6; group.add(main);
+  /* 出球口周围的下部玻璃（避开洞的方向 phi≈90° 前方） */
+  const phiHole = 0.86;                              /* 洞的 phi 半宽（弧度） */
+  const lowA = new THREE.Mesh(new THREE.SphereGeometry(R, 24, 14, Math.PI / 2 + phiHole, Math.PI * 2 - phiHole * 2, t1, Math.PI - t1), glassMat);
+  lowA.renderOrder = 6; group.add(lowA);
+  const lowB = new THREE.Mesh(new THREE.SphereGeometry(R, 12, 4, Math.PI / 2 - phiHole, phiHole * 2, t1, 0.12), glassMat);
+  lowB.renderOrder = 6; group.add(lowB);
+  const lowC = new THREE.Mesh(new THREE.SphereGeometry(R, 12, 4, Math.PI / 2 - phiHole, phiHole * 2, Math.PI - 0.24, 0.24), glassMat);
+  lowC.renderOrder = 6; group.add(lowC);
+
+  /* 顶部入球口金属环 */
+  const inletRing = new THREE.Mesh(new THREE.TorusGeometry(R * Math.sin(cfg.inletHalf) + 0.04, 0.05, 10, 40), metalMat);
+  inletRing.rotation.x = Math.PI / 2;
+  inletRing.position.y = R * cosInlet; group.add(inletRing);
+  /* 入球口滑盖（落球时移开，搅拌时关闭） */
+  const inletCap = new THREE.Mesh(new THREE.CircleGeometry(R * Math.sin(cfg.inletHalf) + 0.05, 32), metalMat);
+  inletCap.rotation.x = -Math.PI / 2;
+  inletCap.position.y = R * cosInlet + 0.05; group.add(inletCap);
+
+  /* 出球口：外凸金属短管（档杆所在），真实可穿孔 */
+  const holeR = R * Math.sin(cfg.exitHalf);
+  const collarLen = 0.55;
+  const collar = new THREE.Mesh(new THREE.CylinderGeometry(holeR + 0.06, holeR + 0.1, collarLen, 24, 1, true), metalMat);
+  collar.position.copy(cfg.exitDir).multiplyScalar(R + collarLen / 2 - 0.12);
+  collar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
+  group.add(collar);
+  /* 出球口档杆（阀板）：绕管口外缘翻转开合 */
+  const valvePivot = new THREE.Group();
+  valvePivot.position.copy(cfg.exitDir).multiplyScalar(R + collarLen - 0.1);
+  valvePivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
+  const valve = new THREE.Mesh(new THREE.CylinderGeometry(holeR + 0.08, holeR + 0.08, 0.05, 24), metalMat);
+  valve.position.y = 0.02; valvePivot.add(valve);
+  group.add(valvePivot);
+
+  /* ---- 搅拌室底部：两个双向旋转搅拌盘（专利机构，斜置让开出球口） ---- */
+  const discMeshes = [];
+  for (const side of [-1, 1]) {
+    const disc = new THREE.Mesh(new THREE.CylinderGeometry(cfg.discR, cfg.discR, 0.1, 28),
+      new THREE.MeshStandardMaterial({ color: 0x5a6a9a, metalness: 0.8, roughness: 0.35 }));
+    disc.position.set(side * cfg.discDX, cfg.discY - cy, 0);
+    disc.rotation.z = side * 0.5;                    /* 内缘低、外缘高，中间让出落球通道 */
+    group.add(disc);
+    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 10), metalMat);
+    axle.position.set(side * cfg.discDX, cfg.discY - cy - 0.25, 0); group.add(axle);
+    discMeshes.push(disc);
+  }
+
+  /* ---- 号码球预览架（顶部）：斜托盘 + 两侧挡板 + 底部双开挡板 ---- */
+  const rackG = new THREE.Group();
+  rackG.position.set(0, cfg.rackY, 0.1);
+  rackG.rotation.x = cfg.rackTilt;
+  group.add(rackG);
+  const nRows = cfg.rackRows.length;
+  const trayW = 7 * cfg.rackDX + 0.5, trayD = nRows * cfg.rackDZ + 0.4;
+  const trayFloorL = new THREE.Mesh(new THREE.BoxGeometry(trayW / 2, 0.05, trayD), acrylicMat);
+  trayFloorL.position.set(-trayW / 4, 0, trayD / 2 - trayD / 2); trayFloorL.position.z = 0;
+  rackG.add(trayFloorL);
+  const trayFloorR = trayFloorL.clone(); trayFloorR.position.x = trayW / 4; rackG.add(trayFloorR);
+  for (const sx of [-1, 1]) {
+    const sideP = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.5, trayD), acrylicMat);
+    sideP.position.set(sx * trayW / 2, 0.25, 0); rackG.add(sideP);
+  }
+  const backP = new THREE.Mesh(new THREE.BoxGeometry(trayW, 0.5, 0.05), acrylicMat);
+  backP.position.set(0, 0.25, -trayD / 2); rackG.add(backP);
+  const frontLip = new THREE.Mesh(new THREE.BoxGeometry(trayW, 0.14, 0.05), goldMat);
+  frontLip.position.set(0, 0.07, trayD / 2); rackG.add(frontLip);
+  /* 预览架支撑柱：从底座顶斜撑到托盘 */
+  for (const sx of [-1, 1]) {
+    const sup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, cfg.rackY - cfg.baseH + 0.4, 10), metalMat);
+    sup.position.set(sx * (cfg.R + 0.45), (cfg.rackY + cfg.baseH - 0.5) / 2 - 0.3, -0.35);
+    sup.rotation.z = sx * 0.32; sup.rotation.x = -0.06;
+    group.add(sup);
+  }
+
+  /* ---- 出球轨道：两根平行圆管（球卡在两管间滚行）+ 落球通道 ---- */
+  const z0 = cfg.chuteZ0, z1 = cfg.chuteZ1;
+  const slopeLen = Math.hypot(z1 - z0, cfg.chuteTopY - cfg.chanBaseY) + 0.3;
+  const slopeAng = Math.atan2(cfg.chuteTopY - cfg.chanBaseY, z1 - z0);
+  const midY = (cfg.chuteTopY + cfg.chanBaseY) / 2, midZ = (z0 + z1) / 2;
+  for (const sx of [-0.26, 0.26]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, slopeLen, 10), goldMat);
+    rod.rotation.x = Math.PI / 2 - slopeAng;
+    rod.position.set(cx + sx, midY - 0.06, midZ);
+    scene.add(rod);
+  }
+  /* 轨道支架 */
+  for (const sz of [z0 + 0.4, (z0 + z1) / 2, z1 - 0.2]) {
+    const fy = cfg.chuteTopY - cfg.chuteSlope * (sz - z0);
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, fy, 8), metalMat);
+    post.position.set(cx, fy / 2, sz); scene.add(post);
+  }
+  /* 集球显示通道（出球轨道末端，球依次排队） */
+  const chanLen = cfg.chanX2 - cfg.chanX1;
+  for (const sx of [-0.26, 0.26]) {
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, chanLen, 10), goldMat);
+    rod.rotation.z = Math.PI / 2;
+    rod.rotation.y = Math.PI / 2;
+    rod.position.set((cfg.chanX1 + cfg.chanX2) / 2, cfg.chanBaseY - 0.06, cfg.chanZ + sx);
+    scene.add(rod);
+  }
+  for (const ex of [cfg.chanX1, cfg.chanX2, cfg.stopX]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.5, cfg.chanHalfW * 2 + 0.14), metalMat);
+    wall.position.set(ex, cfg.chanBaseY + 0.14, cfg.chanZ); scene.add(wall);
+  }
+  for (const sz of [cfg.chanZ - cfg.chanHalfW, cfg.chanZ + cfg.chanHalfW]) {
+    const rail = new THREE.Mesh(new THREE.BoxGeometry(chanLen, 0.4, 0.05), acrylicMat);
+    rail.position.set((cfg.chanX1 + cfg.chanX2) / 2, cfg.chanBaseY + 0.1, sz); scene.add(rail);
+  }
+  function chanXSpan(c) { return Math.max(Math.abs(c.stopX - c.chanX1), Math.abs(c.chanX2 - c.stopX)); }
+  void chanXSpan;
+
+  group.position.set(cx, cy, cz);
+  scene.add(group);
+
+  const glow = new THREE.PointLight(0xffffff, 0.7, R * 3.2);
+  glow.position.set(cx, cy, cz); scene.add(glow);
+
+  /* ---- 球：初始全部停在预览架 ---- */
+  const m = {
+    ...cfg, group, discMeshes, valvePivot, inletCap, trayFloorL, trayFloorR,
+    balls: [], agit: 0, agitTarget: 0,
+    loadOpen: false, holeOpen: false,
+    cosInlet, cosExit, exitDirW: cfg.exitDir.clone(),
+    exitW: new THREE.Vector3(cx, cy, cz).addScaledVector(cfg.exitDir, R),
+    doorAnim: 0, valveAnim: 0,
+    phase: 'idle', timer: 0, drawsLeft: cfg.key === 'red' ? 6 : 1,
+    capturedBall: null, doneCount: 0,
+  };
+  const cosT = Math.cos(cfg.rackTilt), sinT = Math.sin(cfg.rackTilt);
+  let idx = 0;
+  for (let r = 0; r < nRows; r++) {
+    const cnt = cfg.rackRows[r];
+    for (let i = 0; i < cnt; i++) {
+      const num = ++idx;
+      const mesh = makeBallMesh(num, cfg.color);
+      const lx = (i - (cnt - 1) / 2) * cfg.rackDX;
+      const lz = cfg.rackZ0 + r * cfg.rackDZ + trayD / 2 - 0.2;
+      const ly = 0.34;
+      const p = new THREE.Vector3(
+        cx + lx,
+        cfg.rackY + ly * cosT - lz * sinT + 0.0,
+        0.1 + ly * sinT + lz * cosT
+      );
+      const b = { num, p, v: new THREE.Vector3(), mesh, state: 'rack', placed: false, m };
+      m.balls.push(b);
+      mesh.position.copy(p);
+      mesh.rotation.y = Math.random() * Math.PI * 2;
+      scene.add(mesh);
+    }
+  }
+  machines.push(m);
+  return m;
+}
+MACH_CFG.forEach(buildMachine);
+
+/* ================= HUD ================= */
+const resultsEl = document.getElementById('results');
+const phaseEl = document.getElementById('phase');
+const slotEls = [];
+for (let i = 0; i < 7; i++) {
+  const d = document.createElement('div');
+  d.className = 'slot ' + (i < 6 ? 'red' : 'blue');
+  resultsEl.appendChild(d); slotEls.push(d);
+}
+function setPhase(t, active) { phaseEl.textContent = t; phaseEl.className = active ? 'active' : ''; }
+
+/* ================= 物理 ================= */
+const _rel = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3(), _dir = new THREE.Vector3();
+
+function stepInBall(b, m, dt) {
+  const v = b.v, p = b.p;
+  v.y -= G * dt;
+
+  if (m.agit > 0.01) {
+    /* 双搅拌盘：左右反向切向拖带 + 盘面弹跳（对应两个双向旋转底盘） */
+    for (const side of [-1, 1]) {
+      const dx = p.x - (m.cx + side * m.discDX), dz = p.z - m.cz;
+      const rr = Math.hypot(dx, dz);
+      if (rr < m.discR + R_BALL * 1.6 && Math.abs(p.y - m.discY) < 0.9) {
+        const w = side * 12;                        /* 两盘反向 */
+        const sp = w * m.agit * Math.min(rr, m.discR) * 1.25;
+        v.x += -dz / (rr + 1e-4) * sp * dt;
+        v.z += dx / (rr + 1e-4) * sp * dt;
+        if (p.y < m.discY + 0.5 && p.y > m.discY - 0.25 && Math.random() < 0.22) {
+          v.y += 8.5 * m.agit * dt * (0.5 + Math.random());
+        }
+      }
+    }
+  }
+
+  if (m.holeOpen) {
+    /* 出球口导流：把球堆引向洞口（其余球仍在搅拌） */
+    _dir.subVectors(m.exitW, p);
+    const dd = _dir.length();
+    if (dd < m.R * 1.8) {
+      v.addScaledVector(_dir.normalize(), 130 * (1 - dd / (m.R * 1.8)) * dt);
+    }
+  }
+
+  const damp = m.agit > 0.01 ? 0.4 : 0.15;
+  v.multiplyScalar(Math.max(0, 1 - damp * dt));
+  p.addScaledVector(v, dt);
+
+  /* 落球导流斗：预览架挡板打开后，把球收拢导入搅拌室顶口 */
+  if (m.loadOpen && p.y > m.cy + 0.4 && p.y < m.rackY + 0.4) {
+    const rho = Math.hypot(p.x - m.cx, p.z - m.cz);
+    if (rho > 0.42) {
+      const s = 0.42 / rho;
+      p.x = m.cx + (p.x - m.cx) * s;
+      p.z = m.cz + (p.z - m.cz) * s;
+      v.x *= 0.6; v.z *= 0.6;
+    }
+  }
+
+  /* 搅拌室玻璃约束：顶部入球口 / 下前方出球口可穿 */
+  _rel.subVectors(p, _t.set(m.cx, m.cy, m.cz));
+  const d = _rel.length();
+  if (d > m.R - R_BALL) {
+    _n.copy(_rel).divideScalar(d);
+    const inInlet = m.loadOpen && _n.y > m.cosInlet;
+    const inExit = m.holeOpen && _n.dot(m.exitDirW) > m.cosExit;
+    if (inExit && d > m.R + R_BALL * 0.7 && !m.capturedBall) {
+      b.state = 'rail'; b.placed = false;
+      m.capturedBall = b;
+      m.holeOpen = false;               /* 真机档杆动作：出一颗立即关阀 */
+      return;
+    }
+    if (!inInlet && !inExit) {
+      p.copy(_t).addScaledVector(_n, m.R - R_BALL);
+      const vn = v.dot(_n);
+      if (vn > 0) {
+        v.addScaledVector(_n, -(1 + REST_WALL) * vn);
+        v.multiplyScalar(0.985);
+      }
+    }
+  }
+}
+
+function chuteFloorY(m, z) { return m.chuteTopY - m.chuteSlope * (z - m.chuteZ0); }
+function chanFloorY(m, x) { return m.chanBaseY + 0.045 * (m.stopX - x) * -m.rollDir; }
+
+function stepRailBall(b, m, dt) {
+  const v = b.v, p = b.p;
+  v.y -= G * dt;
+  p.addScaledVector(v, dt);
+
+  if (p.z < m.chuteZ1) {
+    /* 出球轨道斜坡段：球卡在两根圆管之间滚下 */
+    p.x = m.cx + THREE.MathUtils.clamp(p.x - m.cx, -0.2, 0.2);
+    v.x *= (1 - 4 * dt);
+    const fY = chuteFloorY(m, p.z);
+    if (p.y < fY) {
+      p.y = fY;
+      if (v.y < -2.5) v.y *= -0.25; else v.y = 0;
+      v.z += G * m.chuteSlope * dt;
+    }
+    v.z *= (1 - 0.08 * dt);
+  } else {
+    /* 显示通道：微坡滚向挡板，球挨球排队 */
+    b.railT = (b.railT || 0) + dt;
+    const fY = chanFloorY(m, p.x);
+    if (p.y < fY) {
+      p.y = fY;
+      if (v.y < -2.5) v.y *= -0.25; else v.y = 0;
+      v.x += m.rollDir * G * 0.045 * dt;
+    }
+    v.x *= (1 - 0.5 * dt);
+    if (Math.abs(p.z - m.chanZ) > 0.18) {
+      p.z = m.chanZ + Math.sign(p.z - m.chanZ) * 0.18;
+      v.z *= -0.2;
+    }
+    if (m.rollDir < 0) { if (p.x < m.stopX + R_BALL) { p.x = m.stopX + R_BALL; v.x *= -0.25; } }
+    else { if (p.x > m.stopX - R_BALL) { p.x = m.stopX - R_BALL; v.x *= -0.25; } }
+    /* 停稳判定（进通道至少 1.2s，保证先滚到挡板） → 入位 */
+    if (!b.placed && b.railT > 1.2 && Math.abs(v.x) < 0.25 && Math.abs(v.z) < 0.2 && p.z > m.chuteZ1 - 0.05) {
+      b.placed = true;
+      onBallPlaced(b, m);
+    }
+  }
+}
+
+/* 球-球碰撞（同组） */
+function collideGroup(arr, dt) {
+  for (let i = 0; i < arr.length; i++) {
+    for (let j = i + 1; j < arr.length; j++) {
+      const a = arr[i], b = arr[j];
+      _rel.subVectors(b.p, a.p);
+      const d = _rel.length(), min = R_BALL * 2;
+      if (d > 1e-6 && d < min) {
+        _n.copy(_rel).divideScalar(d);
+        const overlap = min - d;
+        a.p.addScaledVector(_n, -overlap * 0.5);
+        b.p.addScaledVector(_n, overlap * 0.5);
+        const rv = _dir.subVectors(b.v, a.v).dot(_n);
+        if (rv < 0) {
+          const imp = -(1 + REST_BALL) * rv * 0.5;
+          a.v.addScaledVector(_n, -imp);
+          b.v.addScaledVector(_n, imp);
+        }
+      }
+    }
+  }
+}
+
+/* ================= 流程控制（真机顺序） ================= */
+const state = { running: false, currentIdx: 0 };
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+function startShow() {
+  if (state.running) return;
+  state.running = true;
+  state.currentIdx = 0;
+  startBtn.disabled = true; resetBtn.disabled = true;
+  beginMachine(machines[0]);
+}
+function beginMachine(m) {
+  m.phase = 'loading'; m.timer = 0; m.doorAnim = 0;
+  setPhase(m.key === 'red' ? '预览架挡板开启 · 号码球落入搅拌室' : '蓝球机：预览架挡板开启 · 落球', true);
+}
+function onBallPlaced(b, m) {
+  const totalIdx = m.key === 'red' ? m.doneCount : 6;
+  const el = slotEls[totalIdx];
+  if (el) { el.textContent = b.num; el.classList.add('filled', 'pop'); }
+  m.doneCount++;
+  /* 入位后号码转向正对镜头 */
+  b.faceTimer = 0;
+}
+
+function updateMachine(m, dt) {
+  m.timer += dt;
+  /* 门 / 阀 动画 */
+  if (m.phase === 'loading') {
+    m.doorAnim = Math.min(1, m.doorAnim + dt / 0.7);
+    m.inletCap.position.x = m.doorAnim * m.R * 1.3;
+    if (m.doorAnim >= 1 && !m.loadOpen) {
+      m.loadOpen = true;
+      for (const b of m.balls) { b.state = 'in'; b.v.set(0, 0, 0); }
+    }
+    if (m.loadOpen && m.balls.every(b => b.p.y < m.cy - 0.1)) {
+      m.loadOpen = false;
+      m.inletCap.position.x = 0;
+      m.phase = 'stir'; m.timer = 0; m.agitTarget = 1;
+      setPhase('搅拌底盘双向旋转 · 充分搅拌中', true);
+    }
+  } else if (m.phase === 'stir') {
+    if (m.timer > 3) {
+      m.phase = 'draw'; m.timer = 0; m.holeOpen = true;
+      setPhase('出球口档杆开启 · 等待出球', true);
+    }
+  } else if (m.phase === 'draw') {
+    if (m.timer > 3.5 && !m.capturedBall) {
+      /* 兜底：给最靠近出口的球一个物理冲量 */
+      let best = null, bd = 1e9;
+      for (const b of m.balls) {
+        if (b.state !== 'in') continue;
+        const d = b.p.distanceTo(m.exitW);
+        if (d < bd) { bd = d; best = b; }
+      }
+      if (best) {
+        _dir.subVectors(m.exitW, best.p).normalize();
+        best.v.addScaledVector(_dir, 7);
+      }
+      m.timer = 1.5;
+    }
+    if (m.capturedBall && m.capturedBall.placed) {
+      m.capturedBall = null;
+      m.drawsLeft--;
+      if (m.drawsLeft > 0) {
+        m.phase = 'stir'; m.timer = 0;
+        setPhase('其余球持续搅拌 · 准备下一球', true);
+      } else {
+        m.phase = 'done'; m.agitTarget = 0.15;
+      }
+    }
+  } else if (m.phase === 'done') {
+    if (state.currentIdx < machines.length - 1) {
+      state.currentIdx++;
+      beginMachine(machines[state.currentIdx]);
+    } else if (machines.every(mm => mm.phase === 'done')) {
+      state.running = false;
+      startBtn.disabled = true; resetBtn.disabled = false;
+      setPhase('本期开奖完成', false);
+    }
+  }
+
+  /* 搅拌强度平滑 */
+  m.agit += (m.agitTarget - m.agit) * Math.min(1, dt * 2);
+  /* 底盘 / 档杆动画与物理同步 */
+  if (m.agit > 0.01) {
+    for (let i = 0; i < 2; i++) m.discMeshes[i].rotation.y += (i === 0 ? 12 : -12) * m.agit * dt;
+  }
+  m.valvePivot.rotation.x = -(m.holeOpen ? 1 : 0) * 1.5;
+
+  /* 球物理 */
+  const inBalls = [], railBalls = [];
+  for (const b of m.balls) {
+    if (b.state === 'in') { stepInBall(b, m, DT); inBalls.push(b); }
+    else if (b.state === 'rail') { stepRailBall(b, m, DT); railBalls.push(b); }
+  }
+  collideGroup(inBalls, DT);
+  collideGroup(railBalls, DT);
+
+  /* mesh 同步 + 滚动旋转 */
+  for (const b of m.balls) {
+    if (b.state === 'rack') continue;
+    if (b.placed) {
+      /* 号码转向镜头 */
+      b.faceTimer = (b.faceTimer ?? 0) + dt;
+      const k = Math.min(1, b.faceTimer / 0.4);
+      b.mesh.rotation.x *= (1 - k);
+      b.mesh.rotation.z *= (1 - k);
+      b.mesh.rotation.y += (-Math.PI / 4 - b.mesh.rotation.y) * k;
+    } else {
+      const sp = Math.hypot(b.v.x, b.v.z);
+      if (sp > 0.05) {
+        b.mesh.rotation.x -= b.v.z / R_BALL * DT * 0.9;
+        b.mesh.rotation.z += b.v.x / R_BALL * DT * 0.9;
+      }
+    }
+    b.mesh.position.copy(b.p);
+  }
+}
+
+/* ================= 重置 ================= */
+function resetAll() {
+  for (const m of machines) {
+    m.phase = 'idle'; m.agit = 0; m.agitTarget = 0;
+    m.loadOpen = false; m.holeOpen = false;
+    m.capturedBall = null; m.doneCount = 0; m.timer = 0;
+    m.doorAnim = 0; m.valvePivot.rotation.x = 0;
+    m.inletCap.position.x = 0;
+    m.drawsLeft = m.key === 'red' ? 6 : 1;
+    const cosT = Math.cos(m.rackTilt), sinT = Math.sin(m.rackTilt);
+    let idx = 0;
+    for (let r = 0; r < m.rackRows.length; r++) {
+      for (let i = 0; i < m.rackRows[r]; i++) {
+        const b = m.balls[idx++];
+        const lx = (i - (m.rackRows[r] - 1) / 2) * m.rackDX;
+        const lz = m.rackZ0 + r * m.rackDZ + (m.rackRows.length * m.rackDZ + 0.4) / 2 - 0.2;
+        b.p.set(m.cx + lx, m.rackY + 0.34 * cosT - lz * sinT, 0.1 + 0.34 * sinT + lz * cosT);
+        b.v.set(0, 0, 0);
+        b.state = 'rack'; b.placed = false; b.faceTimer = 0;
+        b.mesh.position.copy(b.p);
+        b.mesh.rotation.set(0, Math.random() * Math.PI * 2, 0);
+      }
+    }
+  }
+  for (const el of slotEls) { el.textContent = ''; el.classList.remove('filled', 'pop'); }
+  state.running = false;
+  startBtn.disabled = false; resetBtn.disabled = true;
+  setPhase('点击「开始摇奖」', false);
+}
+resetBtn.disabled = true;
+startBtn.addEventListener('click', startShow);
+resetBtn.addEventListener('click', resetAll);
+
+/* ================= 主循环 ================= */
+let last = performance.now();
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (state.running || machines.some(m => m.balls.some(b => b.state !== 'rack' && (!b.placed || b.faceTimer < 0.5)))) {
+    for (const m of machines) {
+      if (m.phase !== 'idle') updateMachine(m, dt);
+      else {
+        /* 非运行时也要同步已入位球的转向动画 */
+        for (const b of m.balls) if (b.placed && b.faceTimer < 0.5) {
+          b.faceTimer += dt;
+          const k = Math.min(1, b.faceTimer / 0.4);
+          b.mesh.rotation.y += (-Math.PI / 4 - b.mesh.rotation.y) * k;
+          b.mesh.position.copy(b.p);
+        }
+      }
+    }
+  }
+  controls.update();
+  composer.render();
+}
+
+requestAnimationFrame(animate);
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  composer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>

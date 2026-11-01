@@ -1,0 +1,11 @@
+# 工作区/本地配置
+.workbuddy/
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 依赖
+node_modules/
