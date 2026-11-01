@@ -194,8 +194,9 @@ const MACH_CFG = [
     exitDir: new THREE.Vector3(0, -0.6, 0.8).normalize(),
     /* 搅拌器（专利 US6145836）：球底水平同轴双转子，中心盘 3 杆 + 外环盘 6 杆，反向不同速 */
     discY: 2.66, rHub: 0.31, rOuter: 0.6, wInner: 14, wOuter: -9,
-    tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [5, 5, 5, 3, 5, 5, 5],   /* 单排管束跨在开口上：6×5+中心 3 = 33 */
-    chuteZ0: 1.0, chuteTopY: 2.8, chuteSlope: 0.42, chuteZ1: 1.4      /* 出球短槽：贴着底座顶面，球滚到底座前缘被取走 */
+    /* 出球轨道（对照 .ref/bing_3 特写）：两段透明单球管，绕台座弯到取球位 */
+    rail: { r1: 0.94, y1: 2.6, s1: 0.167, phi1: 0.6, r2: 1.0, y2: 2.5, s2: 0.05, phiEnd: 1.25 },
+    tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [5, 5, 5, 3, 5, 5, 5]   /* 单排管束跨在开口上：6×5+中心 3 = 33 */
   },
   {
     key: 'blue', cx: 3.8, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
@@ -206,7 +207,7 @@ const MACH_CFG = [
     /* 搅拌器（专利 US6145836）：球底水平同轴双转子，中心盘 3 杆 + 外环盘 6 杆，反向不同速 */
     discY: 2.66, rHub: 0.31, rOuter: 0.6, wInner: 14, wOuter: -9,
     tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [3, 2, 2, 2, 2, 2, 3],   /* 单排管束：3+4×2+3 = 16 */
-    chuteZ0: 1.0, chuteTopY: 2.8, chuteSlope: 0.42, chuteZ1: 1.4
+    rail: { r1: 0.94, y1: 2.6, s1: 0.167, phi1: 0.6, r2: 1.0, y2: 2.5, s2: 0.05, phiEnd: 1.25 }
   },
 ];
 
@@ -379,28 +380,34 @@ function buildMachine(cfg) {
     tube.renderOrder = 7; scene.add(tube);
   }
 
-  /* ---- ③ 出球轨道：出球口下方的透明短槽（对照 .ref/bing_3 特写：贴着底座顶面的短弧槽，
-          球滚到底座前缘被取走；没有悬空伸出的滑梯，也没有横跨台面的通道） ---- */
-  const z0 = cfg.chuteZ0, z1 = cfg.chuteZ1;
-  const drop = cfg.chuteSlope * (z1 - z0);
-  const endY = cfg.chuteTopY - drop;
-  const railLen = Math.hypot(z1 - z0, drop);
-  const slopeAng = Math.atan2(drop, z1 - z0);
-  const midY = (cfg.chuteTopY + endY) / 2 - R_BALL - 0.035, midZ = (z0 + z1) / 2;
-  /* 透明短槽：底板 + 两侧挡墙（全透明，真机取球机构无彩色饰条） */
-  const floorBox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.045, railLen + 0.08), acrylicMat);
-  floorBox.rotation.x = slopeAng;
-  floorBox.position.set(cx, midY, midZ + 0.04);
-  floorBox.renderOrder = 7; scene.add(floorBox);
-  for (const sx of [-0.235, 0.235]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, railLen + 0.08), acrylicMat);
-    wall.rotation.x = slopeAng;
-    wall.position.set(cx + sx, midY + 0.1, midZ + 0.04);
-    wall.renderOrder = 7; scene.add(wall);
+  /* ---- ③ 出球轨道（对照 .ref/bing_3 特写）：两段透明单球管，绕台座弯到取球位。
+          上管绕亚克力柱（出口 → 侧前方），下管贴底座顶缘延续到取球点；只允许一球通过 ---- */
+  {
+    const P = cfg.rail;
+    const tubePath = (r, ySurf, s, ph0, ph1) => {
+      const pts = [];
+      const N = 28;
+      for (let i = 0; i <= N; i++) {
+        const ph = ph0 + (ph1 - ph0) * i / N;
+        pts.push(new THREE.Vector3(cx - Math.sin(ph) * r, ySurf - s * (ph - ph0) + R_BALL, cz + Math.cos(ph) * r));
+      }
+      return new THREE.CatmullRomCurve3(pts);
+    };
+    const tubeMat = new THREE.MeshPhysicalMaterial({
+      color: 0xbfd8ff, metalness: 0, roughness: 0.08,
+      transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false,
+      clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 1.1
+    });
+    const t1 = new THREE.Mesh(new THREE.TubeGeometry(tubePath(P.r1, P.y1, P.s1, 0, P.phi1), 40, R_BALL + 0.035, 14, false), tubeMat);
+    t1.renderOrder = 7; scene.add(t1);
+    const t2 = new THREE.Mesh(new THREE.TubeGeometry(tubePath(P.r2, P.y2, P.s2, P.phi1, P.phiEnd), 40, R_BALL + 0.035, 14, false), tubeMat);
+    t2.renderOrder = 7; scene.add(t2);
+    /* 取球位挡块（透明小柱，球停在这里被取走） */
+    const endX = cx - Math.sin(P.phiEnd) * P.r2, endZ = cz + Math.cos(P.phiEnd) * P.r2;
+    const endY = P.y2 - P.s2 * (P.phiEnd - P.phi1) + R_BALL;
+    const stopper = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.3, 12), tubeMat);
+    stopper.position.set(endX, endY + 0.02, endZ); stopper.renderOrder = 7; scene.add(stopper);
   }
-  /* 槽端挡块（球停在这里 = 真机"槽口取走"位），透明，贴在底座顶面上 */
-  const stopper = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.045), acrylicMat);
-  stopper.position.set(cx, endY + 0.04, z1 + 0.04); stopper.renderOrder = 7; scene.add(stopper);
 
   const glow = new THREE.PointLight(0xffffff, 0.6, R * 3.5);
   glow.position.set(cx, cy, cz); scene.add(glow);
@@ -510,8 +517,11 @@ function stepInBall(b, m, dt) {
     const inExit = m.holeOpen && _n.dot(m.exitDirW) > m.cosExit;
     if (inExit && d > m.R + R_BALL * 0.7 && !m.capturedBall) {
       b.state = 'rail'; b.placed = false;
+      b.phi = 0; b.w = 1.4; b.seg2 = false;      /* 进入上管 */
       m.capturedBall = b;
       m.holeOpen = false;               /* 真机档杆动作：出一颗立即关阀 */
+      /* 已显示过的球被"取走"（缩小消失，腾出单球管） */
+      for (const ob of m.balls) if (ob !== b && ob.placed && !ob.dismiss) { ob.dismiss = true; ob.dismissT = 0; }
       return;
     }
     if (!inInlet && !inExit) {
@@ -525,34 +535,50 @@ function stepInBall(b, m, dt) {
   }
 }
 
-function chuteFloorY(m, z) { return m.chuteTopY - m.chuteSlope * (z - m.chuteZ0); }
+/* 弧形双管轨道（对照 .ref/bing_3：两段透明单球管绕台座）：球沿圆弧滚动，管内一维排队 */
+function railState(m, phi) {
+  const P = m.rail;
+  if (phi < P.phi1) return { r: P.r1, y: P.y1 - P.s1 * phi };
+  return { r: P.r2, y: P.y2 - P.s2 * (phi - P.phi1) };
+}
 
 function stepRailBall(b, m, dt) {
-  const v = b.v, p = b.p;
-  v.y -= G * dt;
-  p.addScaledVector(v, dt);
+  const P = m.rail, p = b.p, v = b.v;
   b.railT = (b.railT || 0) + dt;
-
-  /* 透明短滑轨：球卡在滑槽内沿坡滚向轨端（真机在此被取走） */
-  p.x = m.cx + THREE.MathUtils.clamp(p.x - m.cx, -0.16, 0.16);
-  v.x *= (1 - 4 * dt);
-  const fY = chuteFloorY(m, p.z);
-  if (p.y < fY) {
-    p.y = fY;
-    if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
-    v.z += G * m.chuteSlope * dt;
+  const st = railState(m, b.phi);
+  const slope = b.phi < P.phi1 ? P.s1 : P.s2;
+  b.w += G * slope / (st.r * st.r) * dt;       /* 重力沿弧切向分量 */
+  b.w *= (1 - 0.8 * dt);                       /* 滚动阻尼 */
+  b.phi += b.w * dt;
+  if (b.phi < 0) { b.phi = 0; b.w *= -0.25; }              /* 管口 */
+  if (b.phi > P.phiEnd) { b.phi = P.phiEnd; b.w *= -0.25; } /* 取球位挡块 */
+  const st2 = railState(m, b.phi);
+  p.x = m.cx - Math.sin(b.phi) * st2.r;
+  p.z = m.cz + Math.cos(b.phi) * st2.r;
+  p.y = st2.y + R_BALL;
+  const vt = b.w * st2.r;
+  v.set(-Math.cos(b.phi) * vt, 0, -Math.sin(b.phi) * vt);
+  /* 停稳判定（管内停稳即入位；5s 超时保险）→ 入位显示 */
+  if (!b.placed && ((b.railT > 1.5 && Math.abs(b.w) < 0.35) || b.railT > 5)) {
+    b.placed = true;
+    onBallPlaced(b, m);
   }
-  v.z *= (1 - 0.08 * dt);
-  /* 轨端挡块 */
-  if (p.z > m.chuteZ1) { p.z = m.chuteZ1; v.z *= -0.2; }
-  /* 停稳判定（滑轨上停稳即入位，含停在前面的球堆上；4s 超时保险）→ 入位显示 */
-  const speed2 = v.x * v.x + v.z * v.z;
-  if (!b.placed && b.railT > 1.2 && speed2 < 0.05 && Math.abs(v.y) < 0.35) {
-    b.placed = true;
-    onBallPlaced(b, m);
-  } else if (!b.placed && b.railT > 4) {
-    b.placed = true;
-    onBallPlaced(b, m);
+}
+
+/* 管内一维碰撞：单球管内球排成单列 */
+function collideRail(arr, m) {
+  const P = m.rail;
+  arr.sort((a, c) => a.phi - c.phi);
+  const minD = (R_BALL * 2 + 0.02) / ((P.r1 + P.r2) / 2);
+  for (let i = 0; i < arr.length - 1; i++) {
+    const a = arr[i], c = arr[i + 1];
+    const d = c.phi - a.phi;
+    if (d < minD) {
+      const push = (minD - d) / 2;
+      a.phi = Math.max(0, a.phi - push);
+      c.phi = Math.min(P.phiEnd, c.phi + push);
+      if (a.w > c.w) { const t = a.w; a.w = c.w; c.w = t * 0.5; }
+    }
   }
 }
 
@@ -678,11 +704,19 @@ function updateMachine(m, dt) {
     else if (b.state === 'rail') { stepRailBall(b, m, DT); railBalls.push(b); }
   }
   collideGroup(inBalls);
-  collideGroup(railBalls);
+  collideRail(railBalls, m);
 
   /* mesh 同步 + 滚动旋转 */
   for (const b of m.balls) {
     if (b.state === 'rack') continue;
+    if (b.dismiss) {                           /* 已显示的球被取走：缩小消失 */
+      b.dismissT += dt;
+      const k = Math.max(0.001, 1 - b.dismissT / 0.45);
+      b.mesh.scale.setScalar(k);
+      if (k <= 0.001) b.mesh.visible = false;
+      b.mesh.position.copy(b.p);
+      continue;
+    }
     if (b.placed) {
       b.faceTimer = (b.faceTimer ?? 0) + dt;
       const k = Math.min(1, b.faceTimer / 0.4);
@@ -717,6 +751,8 @@ function resetAll() {
         b.p.set(m.cx + td.x, td.y0 + R_BALL + 0.02 + k * (R_BALL * 2 + 0.02), m.cz + td.z);
         b.v.set(0, 0, 0);
         b.state = 'rack'; b.placed = false; b.faceTimer = 0; b.railT = 0;
+        b.phi = 0; b.w = 0; b.seg2 = false; b.dismiss = false; b.dismissT = 0;
+        b.mesh.visible = true; b.mesh.scale.setScalar(1);
         b.mesh.position.copy(b.p);
         b.mesh.rotation.set(0, Math.random() * Math.PI * 2, 0);
       }

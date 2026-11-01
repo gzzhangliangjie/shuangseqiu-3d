@@ -7,14 +7,18 @@ const CFG = [
   { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
     inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
     tubePitch:0.34, tubeRowN:7, tubeLoad:[5,5,5,3,5,5,5],
-    chuteZ0:1.0, chuteTopY:2.8, chuteSlope:0.42, chuteZ1:1.4, draws:6 },
+    rail:{r1:0.94,y1:2.6,s1:0.167,phi1:0.6,r2:1.0,y2:2.5,s2:0.05,phiEnd:1.25}, draws:6 },
   { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
     inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
     tubePitch:0.34, tubeRowN:7, tubeLoad:[3,2,2,2,2,2,3],
-    chuteZ0:1.0, chuteTopY:2.8, chuteSlope:0.42, chuteZ1:1.4, draws:1 },
+    rail:{r1:0.94,y1:2.6,s1:0.167,phi1:0.6,r2:1.0,y2:2.5,s2:0.05,phiEnd:1.25}, draws:1 },
 ];
 
-function chuteFloorY(m,z){ return m.chuteTopY - m.chuteSlope*(z-m.chuteZ0); }
+function railState(m,phi){
+  const P=m.rail;
+  if(phi<P.phi1) return {r:P.r1, y:P.y1-P.s1*phi};
+  return {r:P.r2, y:P.y2-P.s2*(phi-P.phi1)};
+}
 
 function makeMachine(cfg){
   // 预览架竖管内初始位（单排 7 管，与 index.html tubeDefs 一致）
@@ -77,7 +81,9 @@ function stepInBall(b,m,dt){
     const inInlet=m.loadOpen&&ny>m.cosInlet;
     const inExit=m.holeOpen&&(nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit;
     if(inExit&&d>m.R+R_BALL*0.7&&!m.captured){
-      b.state='rail'; b.placed=false; m.captured=b; m.holeOpen=false; return;
+      b.state='rail'; b.placed=false; b.phi=0; b.w=1.4; m.captured=b; m.holeOpen=false;
+      for(const ob of m.balls) if(ob!==b&&ob.placed&&ob.state==='rail') ob.state='done';
+      return;
     }
     if(!inInlet&&!inExit){
       const push=m.R-R_BALL;
@@ -91,19 +97,38 @@ function stepInBall(b,m,dt){
 }
 
 function stepRailBall(b,m,dt){
-  const v=b.v,p=b.p;
-  v[1]-=G*dt; for(let i=0;i<3;i++) p[i]+=v[i]*dt;
+  const P=m.rail,p=b.p,v=b.v;
   b.railT+=dt;
-  // 透明短滑轨：球卡在滑槽内沿坡滚向轨端（真机在此被取走）
-  p[0]=m.cx+Math.max(-0.16,Math.min(0.16,p[0]-m.cx)); v[0]*=(1-4*dt);
-  const fY=chuteFloorY(m,p[2]);
-  if(p[1]<fY){ p[1]=fY; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; v[2]+=G*m.chuteSlope*dt; }
-  v[2]*=(1-0.08*dt);
-  if(p[2]>m.chuteZ1){ p[2]=m.chuteZ1; v[2]*=-0.2; }
-  // 停稳判定：滑轨上停稳即入位（含停在前面的球堆上）；4s 超时保险
-  const sp2=v[0]*v[0]+v[2]*v[2];
-  if(!b.placed&&b.railT>1.2&&sp2<0.05&&Math.abs(v[1])<0.35) b.placed=true;
-  else if(!b.placed&&b.railT>4) b.placed=true;
+  const st=railState(m,b.phi);
+  const slope=b.phi<P.phi1?P.s1:P.s2;
+  b.w+=G*slope/(st.r*st.r)*dt;
+  b.w*=(1-0.8*dt);
+  b.phi+=b.w*dt;
+  if(b.phi<0){ b.phi=0; b.w*=-0.25; }
+  if(b.phi>P.phiEnd){ b.phi=P.phiEnd; b.w*=-0.25; }
+  const st2=railState(m,b.phi);
+  p[0]=m.cx-Math.sin(b.phi)*st2.r;
+  p[2]=m.cz+Math.cos(b.phi)*st2.r;
+  p[1]=st2.y+R_BALL;
+  const vt=b.w*st2.r;
+  v[0]=-Math.cos(b.phi)*vt; v[1]=0; v[2]=-Math.sin(b.phi)*vt;
+  if(!b.placed&&((b.railT>1.5&&Math.abs(b.w)<0.35)||b.railT>5)) b.placed=true;
+}
+
+function collideRail(arr,m){
+  const P=m.rail;
+  arr.sort((a,c)=>a.phi-c.phi);
+  const minD=(R_BALL*2+0.02)/((P.r1+P.r2)/2);
+  for(let i=0;i<arr.length-1;i++){
+    const a=arr[i],c=arr[i+1];
+    const d=c.phi-a.phi;
+    if(d<minD){
+      const push=(minD-d)/2;
+      a.phi=Math.max(0,a.phi-push);
+      c.phi=Math.min(P.phiEnd,c.phi+push);
+      if(a.w>c.w){ const t=a.w; a.w=c.w; c.w=t*0.5; }
+    }
+  }
 }
 
 function collideGroup(arr){
@@ -151,13 +176,14 @@ function runMachine(m, log){
       else if(b.state==='rail') stepRailBall(b,m,DT);
     }
     collideGroup(m.balls.filter(b=>b.state==='in'));
-    collideGroup(m.balls.filter(b=>b.state==='rail'));
+    collideRail(m.balls.filter(b=>b.state==='rail'),m);
     if(placedCount>=m.draws) break;
   }
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }
   const done=m.balls.filter(b=>b.placed);
-  const zs=done.map(b=>+b.p[2].toFixed(2));
-  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  停稳z=[${zs.join(',')}]\n     全部停在短滑轨上=${done.every(b=>b.p[2]>m.chuteZ0&&b.p[2]<=m.chuteZ1+0.05&&Math.abs(b.p[0]-m.cx)<0.2&&b.p[1]<m.chuteTopY+0.3)}`);
+  const phis=done.map(b=>+b.phi.toFixed(2));
+  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  取球位phi=[${phis.join(',')}]
+     全部到达/经过取球管=${done.every(b=>b.phi>0.3)}`);
   return true;
 }
 
