@@ -10,3 +10,4 @@ Thumbs.db
 # 依赖
 node_modules/
 .ref/
+index.html.bak

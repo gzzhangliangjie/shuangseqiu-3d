@@ -111,7 +111,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
-camera.position.set(0, 5.0, 14.6);
+camera.position.set(0, 5.2, 13.0);
 
 /* 后期：轻辉光 */
 const composer = new EffectComposer(renderer);
@@ -120,7 +120,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.
 composer.addPass(bloom);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 3.4, 0);
+controls.target.set(0, 3.6, 0);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.52;
 controls.minDistance = 6;
@@ -159,7 +159,7 @@ rim.rotation.x = Math.PI / 2; rim.position.y = 0.02; scene.add(rim);
 /* ================= 物理常量 =================
    比例对齐真机：1 单位 ≈ 0.296m（底座 0.77m = 2.6 单位）
    搅拌室 Ø0.70m → R=1.18；摇奖球 Ø0.05m 真实比例过小，取 R=0.20 保证号码可读 */
-const R_BALL = 0.20;
+const R_BALL = 0.15;
 const G = 22;
 const REST_BALL = 0.55;
 const REST_WALL = 0.62;
@@ -181,34 +181,31 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
   clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 1.1
 });
 
-/* ============ 真机几何参数（对照官方照片/渲染图，全部世界坐标） ============
+/* ============ 真机几何参数（对照 .ref/bing_10 高清全景 + bing_3 出球特写 + bing_12 官方标注图） ============
    比例：1 单位 ≈ 0.296m。底座 0.77m≈2.6u / 搅拌室 Ø0.70m→R=1.18 / 预览架管束比球高。
-   底座 = 宝蓝"花瓶柱"：下展足 → 收腰柱身 → 上展领圈（比玻璃球窄）。
-   预览架 = 一圈竖直透明细管（环径 < 球径），球停管内下半段，管顶高出球很多。 */
+   底座 = 深蓝直筒圆柱（真机即如此，正面红色双色球 LOGO），顶面托透明亚克力底盘，玻璃球直接坐在上面。
+   出球轨道 = 出球口下方一条贴着底座顶缘的透明短滑轨，球滑到轨端被取走（bing_3 特写），无横跨台面通道。
+   预览架 = 一排竖直透明细管立在球壳顶部。 */
 const MACH_CFG = [
   {
     key: 'red', cx: -3.8, cz: 0, count: 33, color: '#d0342c', label: '1 号机 · 红球区',
     R: 1.18, cy: 3.68,
-    inletHalf: 47 * Math.PI / 180,             /* 搅拌室顶部开口（管束正下方，环径全部罩住） */
-    exitHalf: 17 * Math.PI / 180,              /* 出球口：下前方，抬高避开底座领圈 */
-    exitDir: new THREE.Vector3(0, -0.75, 0.66).normalize(),
+    inletHalf: 60 * Math.PI / 180,             /* 搅拌室顶部大开口（管束正好跨在开口上，球垂直直落） */
+    exitHalf: 10 * Math.PI / 180,              /* 出球口：下前方，口径略大于球（真机比例） */
+    exitDir: new THREE.Vector3(0, -0.6, 0.8).normalize(),
     discDX: 0.52, discR: 0.48, discY: 3.05,
-    tubePitch: 0.50, tubeRowN: 9, tubeR: 0.23, tubeH: 1.95, ballsPerTube: 4,   /* 单排弧形管束：9 管（8×4 + 中心 1 = 33） */
-    chuteZ0: 1.0, chuteTopY: 2.35, chuteSlope: 0.72, chuteZ1: 2.9,
-    chanZ: 3.45, chanHalfW: 0.34, chanBaseY: 0.92,
-    rollDir: -1, stopX: -7.0, chanX1: -7.5, chanX2: -2.6
+    tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [5, 5, 5, 3, 5, 5, 5],   /* 单排管束跨在开口上：6×5+中心 3 = 33 */
+    chuteZ0: 0.95, chuteTopY: 2.82, chuteSlope: 0.626, chuteZ1: 2.5   /* 透明短滑轨：出口下 → 底座前方轨端 */
   },
   {
     key: 'blue', cx: 3.8, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
     R: 1.18, cy: 3.68,
-    inletHalf: 47 * Math.PI / 180,
-    exitHalf: 17 * Math.PI / 180,
-    exitDir: new THREE.Vector3(0, -0.75, 0.66).normalize(),
+    inletHalf: 60 * Math.PI / 180,
+    exitHalf: 10 * Math.PI / 180,
+    exitDir: new THREE.Vector3(0, -0.6, 0.8).normalize(),
     discDX: 0.52, discR: 0.48, discY: 3.05,
-    tubePitch: 0.50, tubeRowN: 8, tubeR: 0.23, tubeH: 1.10, ballsPerTube: 2,   /* 单排管束：8 管×2 = 16 */
-    chuteZ0: 1.0, chuteTopY: 2.35, chuteSlope: 0.72, chuteZ1: 2.9,
-    chanZ: 3.45, chanHalfW: 0.34, chanBaseY: 0.92,
-    rollDir: 1, stopX: 7.0, chanX1: 2.6, chanX2: 7.5
+    tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [3, 2, 2, 2, 2, 2, 3],   /* 单排管束：3+4×2+3 = 16 */
+    chuteZ0: 0.95, chuteTopY: 2.82, chuteSlope: 0.626, chuteZ1: 2.5
   },
 ];
 
@@ -264,19 +261,19 @@ function buildMachine(cfg) {
   const cosInlet = Math.cos(cfg.inletHalf), cosExit = Math.cos(cfg.exitHalf);
   const sphBottom = cy - R;
 
-  /* ---- ④ 底座：宝蓝"花瓶柱"（对照真机渲染图：下展足 → 收腰柱身 → 上展领圈） ---- */
-  const foot = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.28, 0.42, 48), blueDeep);
-  foot.position.set(cx, 0.21, cz); scene.add(foot);
-  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.90, 1.45, 48), blueBase);
-  shaft.position.set(cx, 0.42 + 0.725, cz); scene.add(shaft);
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.10, 0.86, 0.72, 48), blueBase);
-  collar.position.set(cx, 1.87 + 0.36, cz); scene.add(collar);
-  const lip = new THREE.Mesh(new THREE.TorusGeometry(1.04, 0.05, 10, 48), blueDeep);
-  lip.rotation.x = Math.PI / 2; lip.position.set(cx, 2.60, cz); scene.add(lip);
+  /* ---- ④ 底座：深蓝直筒圆柱（对照 bing_10 全景：等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
+  const footRing = new THREE.Mesh(new THREE.CylinderGeometry(1.14, 1.18, 0.12, 48), blueDeep);
+  footRing.position.set(cx, 0.06, cz); scene.add(footRing);
+  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 2.44, 48), blueBase);
+  baseBody.position.set(cx, 0.12 + 1.22, cz); scene.add(baseBody);           /* 顶面 y=2.50，正好托住玻璃球底 */
+  const topTrim = new THREE.Mesh(new THREE.TorusGeometry(1.05, 0.045, 10, 64), blueDeep);
+  topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
+  const tray = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.12, 0.06, 48), acrylicMat);
+  tray.position.set(cx, 2.53, cz); tray.renderOrder = 5; scene.add(tray);    /* 透明亚克力底盘 */
   const logo = new THREE.Mesh(new THREE.CircleGeometry(0.40, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
-  logo.position.set(cx, 1.15, 0.895 + cz * 0); logo.position.z = cz + 0.885;
-  logo.rotation.x = -0.04; scene.add(logo);
+  logo.position.set(cx, 1.25, cz + 1.053);
+  logo.rotation.x = -0.02; scene.add(logo);
 
   /* ---- ② 球状搅拌室（Ø0.70m）：透明玻璃球，顶部开口 + 下前方出球口（真挖洞） ---- */
   const t0 = cfg.inletHalf, t1 = Math.PI - cfg.exitHalf * 1.15;
@@ -303,20 +300,23 @@ function buildMachine(cfg) {
   const inletCap = new THREE.Mesh(new THREE.CylinderGeometry(gateR, gateR, 0.07, 48), blueDeep);
   inletCap.position.set(cx, plateY - 0.035, cz); scene.add(inletCap);
   /* 管束外圈固定环（管子插在环内，视觉上立住） */
-  const fixRing = new THREE.Mesh(new THREE.TorusGeometry(cfg.tubeRingR + cfg.tubeR * 0.9, 0.028, 8, 48), metalMat);
+  const rowSpan = (cfg.tubeRowN - 1) / 2 * cfg.tubePitch + cfg.tubeR * 2.2;
+  const fixRing = new THREE.Mesh(new THREE.TorusGeometry(rowSpan, 0.028, 8, 48), metalMat);
   fixRing.rotation.x = Math.PI / 2; fixRing.position.set(cx, plateY + 0.04, cz); scene.add(fixRing);
 
-  /* 出球口：外凸金属短管 + 翻板档杆 */
+  /* 出球口：球径大小的金属短管 + 翻板档杆 */
   const exR = R * Math.sin(cfg.exitHalf);
-  const collarLen = 0.35;
-  const exCollar = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.035, exR + 0.055, collarLen, 24, 1, true), metalMat);
-  exCollar.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen / 2 - 0.1);
+  const collarLen = 0.18;
+  const exCollar = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.03, exR + 0.045, collarLen, 24, 1, true),
+    new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2, side: THREE.DoubleSide }));
+  exCollar.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen / 2 - 0.06);
   exCollar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
   scene.add(exCollar);
   const valvePivot = new THREE.Group();
-  valvePivot.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen - 0.08);
+  valvePivot.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen - 0.05);
   valvePivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
-  const valve = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.045, exR + 0.045, 0.04, 24), metalMat);
+  const valve = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.035, exR + 0.035, 0.035, 24),
+    new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2, side: THREE.DoubleSide }));
   valve.position.y = 0.02; valvePivot.add(valve);
   scene.add(valvePivot);
 
@@ -346,70 +346,60 @@ function buildMachine(cfg) {
     discSpins.push(spin);
   }
 
-  /* ---- ① 号码球预览架：单排竖直透明管束（对照真机），子午线金属环支撑 ---- */
+  /* ---- ① 号码球预览架：单排竖直透明管束（对照真机 bing_10），球壳上的蓝色装饰子午环 ---- */
   const hoopY = cy + R + 0.07;
-  const hoop = new THREE.Mesh(new THREE.TorusGeometry(R + 0.07, 0.035, 8, 72), metalMat);
-  hoop.position.set(cx, cy, cz); scene.add(hoop);          /* 竖直子午环（x-y 平面），管束立其顶 */
+  const hoop = new THREE.Mesh(new THREE.TorusGeometry(R + 0.07, 0.035, 8, 72), blueDeep);
+  hoop.rotation.y = 0; hoop.position.set(cx, cy, cz); scene.add(hoop);     /* 竖直子午环（x-y 平面） */
   const tubeDefs = [];
   const rowN = cfg.tubeRowN;
   for (let i = 0; i < rowN; i++) {
-    const x = (i - (rowN - 1) / 2) * cfg.tubePitch;
-    tubeDefs.push({ x, z: 0, n: cfg.ballsPerTube, y0: hoopY });
+    tubeDefs.push({ x: (i - (rowN - 1) / 2) * cfg.tubePitch, z: 0, n: cfg.tubeLoad[i], y0: hoopY });
   }
-  if (cfg.count === 33) tubeDefs[(rowN - 1) / 2].n = 1;    /* 红机中心管 1 颗（8×4+1=33） */
   for (const td of tubeDefs) {
-    const tube = new THREE.Mesh(new THREE.CylinderGeometry(cfg.tubeR, cfg.tubeR, cfg.tubeH, 16, 1, true), acrylicMat);
-    tube.position.set(cx + td.x, td.y0 + cfg.tubeH / 2, cz + td.z);
+    const th = td.n * (R_BALL * 2) + 0.26;                 /* 管长按容量，管顶略高出球堆 */
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(cfg.tubeR, cfg.tubeR, th, 16, 1, true), acrylicMat);
+    tube.position.set(cx + td.x, td.y0 + th / 2, cz + td.z);
     tube.renderOrder = 7; scene.add(tube);
   }
-  /* 顶部入口导流锥：挡板打开后球沿锥面滑入搅拌室顶口 */
-  const funTopR = rowN * cfg.tubePitch * 0.47 + 0.15;
-  const funnelMat = new THREE.MeshPhysicalMaterial({
-    color: 0xbfd8ff, metalness: 0, roughness: 0.08,
-    transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false,
-    clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 0.5
-  });
-  const funnel = new THREE.Mesh(new THREE.CylinderGeometry(funTopR, holeR - 0.02, 0.5, 48, 1, true), funnelMat);
-  funnel.position.set(cx, plateY + 0.27, cz);
-  funnel.renderOrder = 7; scene.add(funnel);
 
-  /* ---- ③ 出球轨道：两根平行圆管 + 显示通道（世界坐标） ---- */
+  /* ---- ③ 出球轨道：出球口下方的透明短滑轨（对照 .ref/bing_3 特写：贴着底座的透明槽，
+          球滑到轨端被取走；真机没有横跨台面的通道） ---- */
   const z0 = cfg.chuteZ0, z1 = cfg.chuteZ1;
-  const slopeLen = Math.hypot(z1 - z0, cfg.chuteTopY - cfg.chanBaseY) + 0.25;
-  const slopeAng = Math.atan2(cfg.chuteTopY - cfg.chanBaseY, z1 - z0);
-  const midY = (cfg.chuteTopY + cfg.chanBaseY) / 2, midZ = (z0 + z1) / 2;
-  /* 透明 U 形滑槽（对照真机：底座侧透明槽形滑道）+ 金色上沿 + 支撑柱 */
-  const floorBox = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.06, slopeLen), acrylicMat);
+  const drop = cfg.chuteSlope * (z1 - z0);
+  const endY = cfg.chuteTopY - drop;
+  const railLen = Math.hypot(z1 - z0, drop);
+  const slopeAng = Math.atan2(drop, z1 - z0);
+  const midY = (cfg.chuteTopY + endY) / 2 - R_BALL - 0.035, midZ = (z0 + z1) / 2;
+  const redTrim = new THREE.MeshStandardMaterial({ color: 0xc23a30, roughness: 0.4, metalness: 0.2 });
+  /* 透明滑槽：底板 + 两侧挡墙 + 细红上沿（bing_3 里轨道边缘有红色饰条） */
+  const floorBox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.045, railLen + 0.06), acrylicMat);
   floorBox.rotation.x = slopeAng;
-  floorBox.position.set(cx, midY - R_BALL - 0.035, midZ);
+  floorBox.position.set(cx, midY, midZ + 0.03);
   floorBox.renderOrder = 7; scene.add(floorBox);
-  for (const sx of [-0.38, 0.38]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.3, slopeLen), acrylicMat);
+  for (const sx of [-0.235, 0.235]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, railLen + 0.06), acrylicMat);
     wall.rotation.x = slopeAng;
-    wall.position.set(cx + sx, midY - R_BALL + 0.115, midZ);
+    wall.position.set(cx + sx, midY + 0.1, midZ + 0.03);
     wall.renderOrder = 7; scene.add(wall);
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.032, slopeLen), goldMat);
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.024, railLen + 0.06), redTrim);
     trim.rotation.x = slopeAng;
-    trim.position.set(cx + sx, midY - R_BALL + 0.275, midZ);
+    trim.position.set(cx + sx, midY + 0.2, midZ + 0.03);
     scene.add(trim);
   }
-  for (const sz of [z0 + 0.35, z1 - 0.15]) {
-    const fy = cfg.chuteTopY - cfg.chuteSlope * (sz - z0) - R_BALL - 0.06;
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, fy, 8), metalMat);
-    post.position.set(cx, fy / 2, sz); scene.add(post);
-  }
-  const chanLen = cfg.chanX2 - cfg.chanX1;
-  const chanFloor = new THREE.Mesh(new THREE.BoxGeometry(chanLen, 0.05, 0.72), goldMat);
-  chanFloor.rotation.z = cfg.rollDir * 0.045;
-  chanFloor.position.set((cfg.chanX1 + cfg.chanX2) / 2, cfg.chanBaseY - R_BALL - 0.02, cfg.chanZ);
-  scene.add(chanFloor);
-  for (const ex of [cfg.chanX1, cfg.chanX2, cfg.stopX]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.4, cfg.chanHalfW * 2 + 0.1), metalMat);
-    wall.position.set(ex, cfg.chanBaseY + 0.1, cfg.chanZ); scene.add(wall);
-  }
-  for (const sz of [cfg.chanZ - cfg.chanHalfW - 0.03, cfg.chanZ + cfg.chanHalfW + 0.03]) {
-    const rail = new THREE.Mesh(new THREE.BoxGeometry(chanLen, 0.3, 0.04), acrylicMat);
-    rail.position.set((cfg.chanX1 + cfg.chanX2) / 2, cfg.chanBaseY + 0.06, sz); scene.add(rail);
+  /* 轨端挡块（小球停在这里 = 真机"槽口取走"位） */
+  const stopper = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.045), redTrim);
+  stopper.position.set(cx, endY + 0.04, z1 + 0.03); scene.add(stopper);
+  /* 斜撑：从底座顶缘斜撑住滑轨中段（真机滑轨贴底座，无落地长腿） */
+  {
+    const sz = 1.85;
+    const railY = cfg.chuteTopY - cfg.chuteSlope * (sz - z0) - R_BALL - 0.06;
+    const anchorY = 2.48, anchorZ = 1.04;                    /* 底座顶缘 */
+    const len = Math.hypot(sz - anchorZ, anchorY - railY);
+    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, len + 0.1),
+      new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2 }));
+    strut.rotation.x = Math.atan2(anchorY - railY, sz - anchorZ);
+    strut.position.set(cx, (railY + anchorY) / 2, (sz + anchorZ) / 2);
+    scene.add(strut);
   }
 
   const glow = new THREE.PointLight(0xffffff, 0.6, R * 3.5);
@@ -493,20 +483,14 @@ function stepInBall(b, m, dt) {
   v.multiplyScalar(Math.max(0, 1 - damp * dt));
   p.addScaledVector(v, dt);
 
-  /* 入口导流锥：球落在锥面上沿面向内滑、掉入搅拌室顶口 */
-  if (m.loadOpen && p.y > m.cy + 0.7) {
+  /* 落球收拢：管束跨在开口上，球直落；仅对落到开口边缘外侧的球施加向心力 */
+  if (m.loadOpen && p.y > m.cy + 0.4) {
     const dx = p.x - m.cx, dz = p.z - m.cz;
     const rho = Math.hypot(dx, dz);
-    const fTopR = m.tubeRowN * m.tubePitch * 0.47 + 0.15;
-    const fBotR = m.R * Math.sin(m.inletHalf) - 0.02;
-    if (rho > 0.05 && rho < fTopR + 0.1) {
-      const surf = m.cy + m.R * m.cosInlet + 0.02 + (rho - fBotR) * (0.5 / (fTopR - fBotR));
-      if (p.y > surf - R_BALL) {
-        p.y = surf + R_BALL * 0.5;
-        if (v.y < -1) v.y *= -0.15;
-        v.x = -dx / rho * 2.2;                 /* 沿锥面匀速向内滑 */
-        v.z = -dz / rho * 2.2;
-      }
+    const maxRho = m.R * Math.sin(m.inletHalf) - R_BALL - 0.04;
+    if (rho > maxRho && rho > 0.05) {
+      v.x -= dx / rho * 30 * dt;
+      v.z -= dz / rho * 30 * dt;
     }
   }
 
@@ -535,45 +519,33 @@ function stepInBall(b, m, dt) {
 }
 
 function chuteFloorY(m, z) { return m.chuteTopY - m.chuteSlope * (z - m.chuteZ0); }
-function chanFloorY(m, x) { return m.chanBaseY + 0.05 * (m.stopX - x) * -m.rollDir; }
 
 function stepRailBall(b, m, dt) {
   const v = b.v, p = b.p;
   v.y -= G * dt;
   p.addScaledVector(v, dt);
+  b.railT = (b.railT || 0) + dt;
 
-  if (p.z < m.chuteZ1) {
-    /* 出球轨道斜坡段：球卡在两根圆管之间滚下 */
-    p.x = m.cx + THREE.MathUtils.clamp(p.x - m.cx, -0.18, 0.18);
-    v.x *= (1 - 4 * dt);
-    const fY = chuteFloorY(m, p.z);
-    if (p.y < fY) {
-      p.y = fY;
-      if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
-      v.z += G * m.chuteSlope * dt;
-    }
-    v.z *= (1 - 0.08 * dt);
-  } else {
-    /* 显示通道：微坡滚向挡板，球挨球排队 */
-    b.railT = (b.railT || 0) + dt;
-    const fY = chanFloorY(m, p.x);
-    if (p.y < fY) {
-      p.y = fY;
-      if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
-      v.x += m.rollDir * G * 0.05 * dt;
-    }
-    v.x *= (1 - 0.5 * dt);
-    if (Math.abs(p.z - m.chanZ) > 0.13) {
-      p.z = m.chanZ + Math.sign(p.z - m.chanZ) * 0.13;
-      v.z *= -0.2;
-    }
-    if (m.rollDir < 0) { if (p.x < m.stopX + R_BALL) { p.x = m.stopX + R_BALL; v.x *= -0.25; } }
-    else { if (p.x > m.stopX - R_BALL) { p.x = m.stopX - R_BALL; v.x *= -0.25; } }
-    /* 停稳判定（进通道至少 1.2s，保证先滚到挡板） → 入位 */
-    if (!b.placed && b.railT > 1.2 && Math.abs(v.x) < 0.22 && Math.abs(v.z) < 0.18 && p.z > m.chuteZ1 - 0.05) {
-      b.placed = true;
-      onBallPlaced(b, m);
-    }
+  /* 透明短滑轨：球卡在滑槽内沿坡滚向轨端（真机在此被取走） */
+  p.x = m.cx + THREE.MathUtils.clamp(p.x - m.cx, -0.16, 0.16);
+  v.x *= (1 - 4 * dt);
+  const fY = chuteFloorY(m, p.z);
+  if (p.y < fY) {
+    p.y = fY;
+    if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
+    v.z += G * m.chuteSlope * dt;
+  }
+  v.z *= (1 - 0.08 * dt);
+  /* 轨端挡块 */
+  if (p.z > m.chuteZ1) { p.z = m.chuteZ1; v.z *= -0.2; }
+  /* 停稳判定（滑轨上停稳即入位，含停在前面的球堆上；4s 超时保险）→ 入位显示 */
+  const speed2 = v.x * v.x + v.z * v.z;
+  if (!b.placed && b.railT > 1.2 && speed2 < 0.05 && Math.abs(v.y) < 0.35) {
+    b.placed = true;
+    onBallPlaced(b, m);
+  } else if (!b.placed && b.railT > 4) {
+    b.placed = true;
+    onBallPlaced(b, m);
   }
 }
 
@@ -646,7 +618,7 @@ function updateMachine(m, dt) {
     }
   } else if (m.phase === 'draw') {
     if (m.timer > 3.5 && !m.capturedBall) {
-      /* 兜底：给最靠近出口的球一个物理冲量 */
+      /* 防堵兜底：给最靠近出口的球一个物理冲量 + 全场抖动（模拟真机持续搅拌防颗粒拱） */
       let best = null, bd = 1e9;
       for (const b of m.balls) {
         if (b.state !== 'in') continue;
@@ -655,7 +627,13 @@ function updateMachine(m, dt) {
       }
       if (best) {
         _dir.subVectors(m.exitW, best.p).normalize();
-        best.v.addScaledVector(_dir, 6);
+        best.v.addScaledVector(_dir, 7);
+      }
+      for (const b of m.balls) {
+        if (b.state !== 'in') continue;
+        b.v.x += (Math.random() - 0.5) * 3;
+        b.v.y += Math.random() * 2.5;
+        b.v.z += (Math.random() - 0.5) * 3;
       }
       m.timer = 1.5;
     }
