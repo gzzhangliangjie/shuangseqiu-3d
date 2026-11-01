@@ -4,14 +4,14 @@
 const R_BALL = 0.15, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discDX:0.52, discR:0.48, discY:3.05,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
     inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
     tubePitch:0.34, tubeRowN:7, tubeLoad:[5,5,5,3,5,5,5],
-    chuteZ0:0.95, chuteTopY:2.82, chuteSlope:0.626, chuteZ1:2.5, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discDX:0.52, discR:0.48, discY:3.05,
+    chuteZ0:1.0, chuteTopY:2.8, chuteSlope:0.42, chuteZ1:1.4, draws:6 },
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
     inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
     tubePitch:0.34, tubeRowN:7, tubeLoad:[3,2,2,2,2,2,3],
-    chuteZ0:0.95, chuteTopY:2.82, chuteSlope:0.626, chuteZ1:2.5, draws:1 },
+    chuteZ0:1.0, chuteTopY:2.8, chuteSlope:0.42, chuteZ1:1.4, draws:1 },
 ];
 
 function chuteFloorY(m,z){ return m.chuteTopY - m.chuteSlope*(z-m.chuteZ0); }
@@ -38,10 +38,12 @@ function stepInBall(b,m,dt){
   const v=b.v,p=b.p;
   v[1]-=G*dt;
   if(m.agit>0.01){
-    for(const side of [-1,1]){
-      const dx=p[0]-(m.cx+side*m.discDX), dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
-      if(rr<m.discR+R_BALL*1.6 && Math.abs(p[1]-m.discY)<0.62){
-        const sp=side*13*m.agit*Math.min(rr,m.discR)*1.3;
+    // 同轴双转子（专利 US6145836）：中心盘/外环盘反向不同速
+    const dx=p[0]-m.cx, dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
+    if(Math.abs(p[1]-m.discY)<0.55){
+      const w=rr<m.rHub?m.wInner:(rr<m.rOuter?m.wOuter:0);
+      if(w!==0){
+        const sp=w*m.agit*Math.min(rr,m.rOuter)*1.3;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
         if(p[1]<m.discY+0.34&&p[1]>m.discY-0.16&&Math.random()<0.24) v[1]+=7.5*m.agit*dt*(0.5+Math.random());
       }
@@ -55,6 +57,10 @@ function stepInBall(b,m,dt){
   const damp=m.agit>0.01?0.4:0.15;
   for(let i=0;i<3;i++) v[i]*=Math.max(0,1-damp*dt);
   for(let i=0;i<3;i++) p[i]+=v[i]*dt;
+
+  // 转子顶面支撑：球坐在双转子上
+  const floorC=m.discY+0.05+R_BALL;
+  if(p[1]<floorC){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
 
   // 落球收拢：仅对落到开口边缘外侧的球施加向心力（与 index.html 一致）
   if(m.loadOpen && p[1]>m.cy+0.4){
@@ -151,7 +157,7 @@ function runMachine(m, log){
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }
   const done=m.balls.filter(b=>b.placed);
   const zs=done.map(b=>+b.p[2].toFixed(2));
-  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  停稳z=[${zs.join(',')}]\n     全部停在短滑轨上=${done.every(b=>b.p[2]>m.chuteZ0&&b.p[2]<=m.chuteZ1+0.05&&Math.abs(b.p[0]-m.cx)<0.2&&b.p[1]<m.chuteTopY)}`);
+  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  停稳z=[${zs.join(',')}]\n     全部停在短滑轨上=${done.every(b=>b.p[2]>m.chuteZ0&&b.p[2]<=m.chuteZ1+0.05&&Math.abs(b.p[0]-m.cx)<0.2&&b.p[1]<m.chuteTopY+0.3)}`);
   return true;
 }
 

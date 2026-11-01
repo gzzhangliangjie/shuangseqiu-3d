@@ -167,7 +167,6 @@ const DT = 1 / 120;
 
 const machines = [];
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xb9c3e2, metalness: 1, roughness: 0.2, envMapIntensity: 1.3 });
-const goldMat  = new THREE.MeshStandardMaterial({ color: 0xd9b45a, metalness: 1, roughness: 0.24, envMapIntensity: 1.35 });
 const blueBase = new THREE.MeshPhysicalMaterial({ color: 0x2743d0, roughness: 0.3, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.18, envMapIntensity: 0.9 });
 const blueDeep = new THREE.MeshPhysicalMaterial({ color: 0x1c2f9e, roughness: 0.38, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.2, envMapIntensity: 0.8 });
 const glassMat = new THREE.MeshPhysicalMaterial({
@@ -193,9 +192,10 @@ const MACH_CFG = [
     inletHalf: 60 * Math.PI / 180,             /* 搅拌室顶部大开口（管束正好跨在开口上，球垂直直落） */
     exitHalf: 10 * Math.PI / 180,              /* 出球口：下前方，口径略大于球（真机比例） */
     exitDir: new THREE.Vector3(0, -0.6, 0.8).normalize(),
-    discDX: 0.52, discR: 0.48, discY: 3.05,
+    /* 搅拌器（专利 US6145836）：球底水平同轴双转子，中心盘 3 杆 + 外环盘 6 杆，反向不同速 */
+    discY: 2.66, rHub: 0.31, rOuter: 0.6, wInner: 14, wOuter: -9,
     tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [5, 5, 5, 3, 5, 5, 5],   /* 单排管束跨在开口上：6×5+中心 3 = 33 */
-    chuteZ0: 0.95, chuteTopY: 2.82, chuteSlope: 0.626, chuteZ1: 2.5   /* 透明短滑轨：出口下 → 底座前方轨端 */
+    chuteZ0: 1.0, chuteTopY: 2.8, chuteSlope: 0.42, chuteZ1: 1.4      /* 出球短槽：贴着底座顶面，球滚到底座前缘被取走 */
   },
   {
     key: 'blue', cx: 3.8, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
@@ -203,9 +203,10 @@ const MACH_CFG = [
     inletHalf: 60 * Math.PI / 180,
     exitHalf: 10 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.6, 0.8).normalize(),
-    discDX: 0.52, discR: 0.48, discY: 3.05,
+    /* 搅拌器（专利 US6145836）：球底水平同轴双转子，中心盘 3 杆 + 外环盘 6 杆，反向不同速 */
+    discY: 2.66, rHub: 0.31, rOuter: 0.6, wInner: 14, wOuter: -9,
     tubePitch: 0.34, tubeRowN: 7, tubeR: 0.17, tubeLoad: [3, 2, 2, 2, 2, 2, 3],   /* 单排管束：3+4×2+3 = 16 */
-    chuteZ0: 0.95, chuteTopY: 2.82, chuteSlope: 0.626, chuteZ1: 2.5
+    chuteZ0: 1.0, chuteTopY: 2.8, chuteSlope: 0.42, chuteZ1: 1.4
   },
 ];
 
@@ -304,11 +305,11 @@ function buildMachine(cfg) {
   const fixRing = new THREE.Mesh(new THREE.TorusGeometry(rowSpan, 0.028, 8, 48), metalMat);
   fixRing.rotation.x = Math.PI / 2; fixRing.position.set(cx, plateY + 0.04, cz); scene.add(fixRing);
 
-  /* 出球口：球径大小的金属短管 + 翻板档杆 */
+  /* 出球口：球径大小的透明亚克力短管 + 透明翻板档杆（真机整个取球机构都是透明的） */
   const exR = R * Math.sin(cfg.exitHalf);
   const collarLen = 0.18;
-  const exCollar = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.03, exR + 0.045, collarLen, 24, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2, side: THREE.DoubleSide }));
+  const exCollar = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.03, exR + 0.045, collarLen, 24, 1, true), acrylicMat);
+  exCollar.renderOrder = 6;
   exCollar.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen / 2 - 0.06);
   exCollar.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
   scene.add(exCollar);
@@ -316,35 +317,51 @@ function buildMachine(cfg) {
   valvePivot.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R + collarLen - 0.05);
   valvePivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
   const valve = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.035, exR + 0.035, 0.035, 24),
-    new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2, side: THREE.DoubleSide }));
-  valve.position.y = 0.02; valvePivot.add(valve);
+    new THREE.MeshPhysicalMaterial({ color: 0xbfd8ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, clearcoat: 1, envMapIntensity: 1.1 }));
+  valve.position.y = 0.02; valve.renderOrder = 6; valvePivot.add(valve);
   scene.add(valvePivot);
 
-  /* ---- 搅拌室底部：两个双向旋转搅拌盘（专利 US6145836：中心盘 3 杆 / 外环盘 8 杆，反向旋转） ---- */
+  /* ---- 搅拌室底部：水平同轴双转子（专利 US6145836 FIG.2/3：中心盘 3 杆 + 外环盘 6 杆，
+          同一平面同心布置，反向不同速旋转；转盘/轴为透明亚克力，拨杆为银色金属） ---- */
   const discSpins = [];
-  const barN = [3, 8];
-  for (let s = 0; s < 2; s++) {
-    const side = s === 0 ? -1 : 1;
-    const tilt = new THREE.Group();
-    tilt.position.set(cx + side * cfg.discDX, cfg.discY, cz);
-    tilt.rotation.z = side * 0.5;
-    scene.add(tilt);
-    const spin = new THREE.Group();
-    tilt.add(spin);
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(cfg.discR, cfg.discR, 0.07, 28),
-      new THREE.MeshStandardMaterial({ color: 0x5a6a9a, metalness: 0.85, roughness: 0.3 }));
-    spin.add(disc);
-    for (let k = 0; k < barN[s]; k++) {
-      const hold = new THREE.Group();
-      hold.rotation.y = k / barN[s] * Math.PI * 2;
-      const bar = new THREE.Mesh(new THREE.BoxGeometry(cfg.discR * 0.92, 0.05, 0.075), metalMat);
-      bar.position.set(cfg.discR * 0.46, 0.06, 0);
-      hold.add(bar); spin.add(hold);
-    }
-    const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.5, 10), metalMat);
-    axle.position.set(cx + side * cfg.discDX, cfg.discY - 0.18, cz); scene.add(axle);
-    discSpins.push(spin);
+  const rotorY = cfg.discY;
+  const brightMetal = new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2 });
+  /* 中心盘（3 根径向杆） */
+  const inner = new THREE.Group();
+  inner.position.set(cx, rotorY, cz); scene.add(inner);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub - 0.02, cfg.rHub - 0.02, 0.05, 32), acrylicMat);
+  hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
+  for (let k = 0; k < 3; k++) {
+    const hold = new THREE.Group(); hold.rotation.y = k / 3 * Math.PI * 2;
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(cfg.rHub - 0.09, 0.05, 0.05), brightMetal);
+    bar.position.set(0.05 + (cfg.rHub - 0.09) / 2, 0.075, 0);
+    hold.add(bar); inner.add(hold);
   }
+  discSpins.push(inner);
+  /* 外环盘（6 根径向杆） */
+  const outer = new THREE.Group();
+  outer.position.set(cx, rotorY, cz); scene.add(outer);
+  const ringShape = new THREE.Shape(); ringShape.absarc(0, 0, cfg.rOuter, 0, Math.PI * 2);
+  const ringHole = new THREE.Path(); ringHole.absarc(0, 0, cfg.rHub + 0.012, 0, Math.PI * 2);
+  ringShape.holes.push(ringHole);
+  const ringGeo = new THREE.ExtrudeGeometry(ringShape, { depth: 0.05, bevelEnabled: false, curveSegments: 48 });
+  ringGeo.rotateX(-Math.PI / 2);
+  const ring = new THREE.Mesh(ringGeo, acrylicMat);
+  ring.renderOrder = 6; outer.add(ring);
+  const oBarLen = cfg.rOuter - cfg.rHub - 0.04;
+  for (let k = 0; k < 6; k++) {
+    const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(oBarLen, 0.05, 0.05), brightMetal);
+    bar.position.set(cfg.rHub + 0.02 + oBarLen / 2, 0.075, 0);
+    hold.add(bar); outer.add(hold);
+  }
+  discSpins.push(outer);
+  /* 传动：中心轴 + 外环轴套（从底座顶伸上来，静止件） */
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.18, 10), brightMetal);
+  axle.position.set(cx, rotorY - 0.09, cz); scene.add(axle);
+  const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub + 0.02, cfg.rHub + 0.02, 0.11, 32, 1, true),
+    new THREE.MeshPhysicalMaterial({ color: 0xbfd8ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false, clearcoat: 1, envMapIntensity: 1.1 }));
+  sleeve.position.set(cx, rotorY - 0.055, cz); sleeve.renderOrder = 5; scene.add(sleeve);
 
   /* ---- ① 号码球预览架：单排竖直透明管束（对照真机 bing_10），球壳上的蓝色装饰子午环 ---- */
   const hoopY = cy + R + 0.07;
@@ -362,45 +379,28 @@ function buildMachine(cfg) {
     tube.renderOrder = 7; scene.add(tube);
   }
 
-  /* ---- ③ 出球轨道：出球口下方的透明短滑轨（对照 .ref/bing_3 特写：贴着底座的透明槽，
-          球滑到轨端被取走；真机没有横跨台面的通道） ---- */
+  /* ---- ③ 出球轨道：出球口下方的透明短槽（对照 .ref/bing_3 特写：贴着底座顶面的短弧槽，
+          球滚到底座前缘被取走；没有悬空伸出的滑梯，也没有横跨台面的通道） ---- */
   const z0 = cfg.chuteZ0, z1 = cfg.chuteZ1;
   const drop = cfg.chuteSlope * (z1 - z0);
   const endY = cfg.chuteTopY - drop;
   const railLen = Math.hypot(z1 - z0, drop);
   const slopeAng = Math.atan2(drop, z1 - z0);
   const midY = (cfg.chuteTopY + endY) / 2 - R_BALL - 0.035, midZ = (z0 + z1) / 2;
-  const redTrim = new THREE.MeshStandardMaterial({ color: 0xc23a30, roughness: 0.4, metalness: 0.2 });
-  /* 透明滑槽：底板 + 两侧挡墙 + 细红上沿（bing_3 里轨道边缘有红色饰条） */
-  const floorBox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.045, railLen + 0.06), acrylicMat);
+  /* 透明短槽：底板 + 两侧挡墙（全透明，真机取球机构无彩色饰条） */
+  const floorBox = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.045, railLen + 0.08), acrylicMat);
   floorBox.rotation.x = slopeAng;
-  floorBox.position.set(cx, midY, midZ + 0.03);
+  floorBox.position.set(cx, midY, midZ + 0.04);
   floorBox.renderOrder = 7; scene.add(floorBox);
   for (const sx of [-0.235, 0.235]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, railLen + 0.06), acrylicMat);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.2, railLen + 0.08), acrylicMat);
     wall.rotation.x = slopeAng;
-    wall.position.set(cx + sx, midY + 0.1, midZ + 0.03);
+    wall.position.set(cx + sx, midY + 0.1, midZ + 0.04);
     wall.renderOrder = 7; scene.add(wall);
-    const trim = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.024, railLen + 0.06), redTrim);
-    trim.rotation.x = slopeAng;
-    trim.position.set(cx + sx, midY + 0.2, midZ + 0.03);
-    scene.add(trim);
   }
-  /* 轨端挡块（小球停在这里 = 真机"槽口取走"位） */
-  const stopper = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, 0.045), redTrim);
-  stopper.position.set(cx, endY + 0.04, z1 + 0.03); scene.add(stopper);
-  /* 斜撑：从底座顶缘斜撑住滑轨中段（真机滑轨贴底座，无落地长腿） */
-  {
-    const sz = 1.85;
-    const railY = cfg.chuteTopY - cfg.chuteSlope * (sz - z0) - R_BALL - 0.06;
-    const anchorY = 2.48, anchorZ = 1.04;                    /* 底座顶缘 */
-    const len = Math.hypot(sz - anchorZ, anchorY - railY);
-    const strut = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, len + 0.1),
-      new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2 }));
-    strut.rotation.x = Math.atan2(anchorY - railY, sz - anchorZ);
-    strut.position.set(cx, (railY + anchorY) / 2, (sz + anchorZ) / 2);
-    scene.add(strut);
-  }
+  /* 槽端挡块（球停在这里 = 真机"槽口取走"位），透明，贴在底座顶面上 */
+  const stopper = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.14, 0.045), acrylicMat);
+  stopper.position.set(cx, endY + 0.04, z1 + 0.04); stopper.renderOrder = 7; scene.add(stopper);
 
   const glow = new THREE.PointLight(0xffffff, 0.6, R * 3.5);
   glow.position.set(cx, cy, cz); scene.add(glow);
@@ -454,13 +454,13 @@ function stepInBall(b, m, dt) {
   v.y -= G * dt;
 
   if (m.agit > 0.01) {
-    /* 双搅拌盘：左右反向切向拖带 + 盘面弹跳（对应两个双向旋转底盘） */
-    for (const side of [-1, 1]) {
-      const dx = p.x - (m.cx + side * m.discDX), dz = p.z - m.cz;
-      const rr = Math.hypot(dx, dz);
-      if (rr < m.discR + R_BALL * 1.6 && Math.abs(p.y - m.discY) < 0.62) {
-        const w = side * 13;
-        const sp = w * m.agit * Math.min(rr, m.discR) * 1.3;
+    /* 同轴双转子（专利 US6145836）：中心盘/外环盘反向不同速，切向拖带 + 拨杆弹跳 */
+    const dx = p.x - m.cx, dz = p.z - m.cz;
+    const rr = Math.hypot(dx, dz);
+    if (Math.abs(p.y - m.discY) < 0.55) {
+      const w = rr < m.rHub ? m.wInner : (rr < m.rOuter ? m.wOuter : 0);
+      if (w !== 0) {
+        const sp = w * m.agit * Math.min(rr, m.rOuter) * 1.3;
         v.x += -dz / (rr + 1e-4) * sp * dt;
         v.z += dx / (rr + 1e-4) * sp * dt;
         if (p.y < m.discY + 0.34 && p.y > m.discY - 0.16 && Math.random() < 0.24) {
@@ -482,6 +482,13 @@ function stepInBall(b, m, dt) {
   const damp = m.agit > 0.01 ? 0.4 : 0.15;
   v.multiplyScalar(Math.max(0, 1 - damp * dt));
   p.addScaledVector(v, dt);
+
+  /* 转子顶面支撑：球坐在双转子上（球心最低 = 盘顶 + R_BALL） */
+  const floorC = m.discY + 0.05 + R_BALL;
+  if (p.y < floorC) {
+    p.y = floorC;
+    if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
+  }
 
   /* 落球收拢：管束跨在开口上，球直落；仅对落到开口边缘外侧的球施加向心力 */
   if (m.loadOpen && p.y > m.cy + 0.4) {
@@ -660,7 +667,7 @@ function updateMachine(m, dt) {
 
   m.agit += (m.agitTarget - m.agit) * Math.min(1, dt * 2);
   if (m.agit > 0.01) {
-    for (let i = 0; i < 2; i++) m.discSpins[i].rotation.y += (i === 0 ? 13 : -13) * m.agit * dt;
+    for (let i = 0; i < 2; i++) m.discSpins[i].rotation.y += (i === 0 ? 14 : -9) * m.agit * dt;
   }
   m.valvePivot.rotation.x = -(m.holeOpen ? 1 : 0) * 1.5;
 
