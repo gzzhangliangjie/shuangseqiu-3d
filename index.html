@@ -179,18 +179,28 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
   transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false,
   clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 0.85
 });
+/* 滑槽专用材质：磨砂半透（opacity 0.34）—— 0.12 时槽壁几乎看不见，球看起来像悬空。
+   槽体与槽口亮边都用它/同色系，保证「两条滑道都清晰可辨」。 */
+const railMat = new THREE.MeshPhysicalMaterial({
+  color: 0xd6ecff, metalness: 0, roughness: 0.28,
+  transparent: true, opacity: 0.34, side: THREE.DoubleSide, depthWrite: false,
+  clearcoat: 0.8, clearcoatRoughness: 0.2, envMapIntensity: 1.0
+});
+const railRimMat = new THREE.MeshStandardMaterial({
+  color: 0xeaf6ff, metalness: 0.1, roughness: 0.35, transparent: true, opacity: 0.85
+});
 
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
    整个台座上的装置（球壳/预览管/搅拌盘/出球机构/滑道）= 全透明有机玻璃，无彩色件。
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
-const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球孔；缩短 + 6° 下坡 */
-  [0.00, 2.30, 0.70], [0.45, 2.255, 0.70], [0.85, 2.21, 0.70],
+const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球孔；缩短 + 9° 下坡（滚得快） */
+  [0.00, 2.30, 0.70], [0.45, 2.235, 0.70], [0.85, 2.17, 0.70],
 ];
-const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.3 清晰可见） → 左行下坡 → 取球位；
-                        明显低于上轨，两轨在画面上不再重叠 */
-  [1.12, 1.92, 0.66], [0.25, 1.83, 0.52], [-0.55, 1.77, 0.44],
+const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.25 清晰可见） → 左行下坡 → 取球位；
+                        坡度 8°（原 5°）+ 滚动阻力大减 → 球滚行时间缩短到 1s 级 */
+  [1.10, 1.92, 0.66], [0.25, 1.78, 0.52], [-0.55, 1.68, 0.44],
 ];
 const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
   [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
@@ -200,9 +210,14 @@ const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
    RAIL_SEGS 就是物理碰撞用的段表；视觉槽体/端板全部由它派生，槽半径与槽口角也来自同一组常量。
    物理一套、表现一套的问题从结构上堵死：改这里 = 同时改物理和画面。
    段格式 [a, b, openA, openB]：open 端 = 洞（球可自由进出），闭端 = 端板挡墙。 */
-const RAIL_WALL_GAP = 0.035;                    /* 球面到槽壁余隙 = 球心偏离轴线的约束量 */
-const RAIL_R = R_BALL + RAIL_WALL_GAP;          /* 槽内壁半径 = 物理管膛半径（唯一真值） */
-const RAIL_OPEN_COS = 0.5;                      /* 法向朝上超过 60° 的弧段：物理不设壁，视觉就开槽口 */
+const RAIL_WALL_GAP = 0.035;                    /* 圆管段（竖直接引管）球心离轴约束量 */
+const RAIL_R = R_BALL + RAIL_WALL_GAP;          /* 圆管段内壁半径 */
+const RAIL_OPEN_COS = 0.5;                      /* 圆管段法向朝上超过 60° 的弧段不设壁 */
+/* U 形滑槽截面（物理与视觉同源，唯一真值）：
+   RAIL_W = 槽内半宽；RAIL_FLOOR = 槽底低于轴线；RAIL_WALLTOP = 侧壁顶高于轴线 */
+const RAIL_W = R_BALL + 0.012;                  /* 0.101：球卡在槽里，左右各 1.2cm 余量 */
+const RAIL_FLOOR = 0.124;                       /* 与圆管段同深 → 接引管→滑槽衔接处球心高度连续 */
+const RAIL_WALLTOP = 0.075;                     /* 壁顶高出静止球顶 2cm：球看得见又跳不出 */
 const RAIL_SEGS = [
   [INTRO_PTS[0], INTRO_PTS[1], false, true],    /* 出球孔接引短槽（出口端封板，下端与上轨连通） */
   [UPPER_PTS[0], UPPER_PTS[1], true, true],     /* 上轨中段（与前后段连续贯通） */
@@ -504,34 +519,58 @@ function buildMachine(cfg) {
     var gatePlate = plate, gateBaseZ = gateZ;
   }
 
-  /* ---- ③ 出球滑道：几何 100% 取自物理段表 RAIL_SEGS（同一份数据，不存在第二套）---- */
+  /* ---- ③ 出球滑道：几何 100% 取自物理段表 RAIL_SEGS（同一份数据，不存在第二套）----
+     竖直接引段 = 圆管（与物理圆管膛同半径）；其余 = U 形滑槽（平底+双壁，
+     截面常量 RAIL_W / RAIL_FLOOR / RAIL_WALLTOP 与物理 railWallCollide 同源） */
   {
-    /* 敞开式滑槽（不是透明管）：槽内壁半径 = RAIL_R（与物理管膛同值），
-       槽口角度 = 物理放开上壁的同一角度（RAIL_OPEN_COS）；端板也按 openA/openB 生成，
-       物理有挡墙才画挡板，物理是洞就是敞口。 */
     const _Y = new THREE.Vector3(0, 1, 0);
-    const slot = Math.acos(RAIL_OPEN_COS);          /* 单侧槽口角，与物理 openTop 判定同源 */
+    const _X = new THREE.Vector3(1, 0, 0);
+    const slot = Math.acos(RAIL_OPEN_COS);
     for (const [a, c, openA, openB] of RAIL_SEGS) {
       const A = new THREE.Vector3(cx + a[0], a[1], cz + a[2]);
       const B = new THREE.Vector3(cx + c[0], c[1], cz + c[2]);
       const dir = B.clone().sub(A); const len = dir.length(); dir.normalize();
-      const q = new THREE.Quaternion().setFromUnitVectors(_Y, dir);
-      /* 「世界上方」在管道局部柱坐标里的角度 → 槽口对准正上方 */
-      const upP = _Y.clone().addScaledVector(dir, -dir.y);
-      if (upP.lengthSq() < 1e-6) upP.set(0, 0, 1); else upP.normalize();
-      const lx = upP.dot(new THREE.Vector3(1, 0, 0).applyQuaternion(q));
-      const lz = upP.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(q));
-      const thUp = Math.atan2(lx, lz);
-      const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.012, 28, 1, true,
-        thUp + slot, Math.PI * 2 - slot * 2);
-      const mesh = new THREE.Mesh(geo, acrylicMat);
-      mesh.position.copy(A).addScaledVector(dir, len / 2);
-      mesh.quaternion.copy(q);
-      mesh.renderOrder = 7; scene.add(mesh);
-      /* 端板：物理闭端才画 */
+      const vertical = Math.abs(dir.y) > 0.7;
+      /* 槽体局部基：X=沿轴，Y=世界上方在⊥平面内的投影，Z=水平侧向 */
+      const up = _Y.clone().addScaledVector(dir, -dir.y);
+      if (up.lengthSq() < 1e-6) up.set(0, 0, 1); else up.normalize();
+      const side = dir.clone().cross(up).normalize();
+      const mid = A.clone().addScaledVector(dir, len / 2);
+      const q = new THREE.Quaternion().setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(dir, up, side));
+      const wallH = RAIL_WALLTOP + RAIL_FLOOR + 0.03;   /* 壁总高：槽底下方 3cm 到壁顶 */
+      const wallY = (RAIL_WALLTOP + (-RAIL_FLOOR - 0.03)) / 2;
+
+      if (vertical) {
+        const thUp = Math.atan2(up.dot(_X.clone().applyQuaternion(q)), up.clone().applyQuaternion(q).z);
+        const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.012, 28, 1, true,
+          thUp + slot, Math.PI * 2 - slot * 2);
+        const mesh = new THREE.Mesh(geo, railMat);
+        mesh.position.copy(mid); mesh.quaternion.copy(q);
+        mesh.renderOrder = 7; scene.add(mesh);
+      } else {
+        /* 槽底板 */
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(len + 0.012, 0.025, RAIL_W * 2 + 0.05), railMat);
+        floor.position.copy(mid).addScaledVector(up, -RAIL_FLOOR - 0.0125);
+        floor.quaternion.copy(q); floor.renderOrder = 7; scene.add(floor);
+        /* 两侧壁 */
+        for (const sgn of [1, -1]) {
+          const wall = new THREE.Mesh(new THREE.BoxGeometry(len + 0.012, wallH, 0.022), railMat);
+          wall.position.copy(mid).addScaledVector(up, wallY).addScaledVector(side, sgn * (RAIL_W + 0.011));
+          wall.quaternion.copy(q); wall.renderOrder = 7; scene.add(wall);
+          /* 壁顶亮边：把 U 形槽轮廓画清楚 */
+          const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, len + 0.012, 8), railRimMat);
+          rim.position.copy(mid).addScaledVector(up, RAIL_WALLTOP).addScaledVector(side, sgn * (RAIL_W + 0.011));
+          rim.quaternion.setFromUnitVectors(_Y, dir);
+          rim.renderOrder = 8; scene.add(rim);
+        }
+      }
+      /* 端板：物理闭端才画（U 形槽用方板，圆管段用圆板） */
       for (const [P, n, closed] of [[A, dir.clone().negate(), !openA], [B, dir.clone(), !openB]]) {
         if (!closed) continue;
-        const plate = new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), acrylicMat);
+        const plate = vertical
+          ? new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), railMat)
+          : new THREE.Mesh(new THREE.BoxGeometry(0.025, wallH, RAIL_W * 2 + 0.05), railMat);
         plate.position.copy(P);
         plate.quaternion.setFromUnitVectors(_Y, n);
         plate.renderOrder = 7; scene.add(plate);
@@ -539,7 +578,7 @@ function buildMachine(cfg) {
     }
     /* 左端挡块：竖直挡板 + 视觉柱 */
     const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
-    const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.30, RAIL_R * 2 + 0.05), acrylicMat);
+    const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.30, RAIL_W * 2 + 0.05), railMat);
     stopPlate.position.set(stopX + 0.055, stopY - 0.02, stopZ); stopPlate.renderOrder = 7; scene.add(stopPlate);
     /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
     const postY0 = 0.62;
@@ -548,8 +587,8 @@ function buildMachine(cfg) {
       [cx + LOWER_PTS[1][0], LOWER_PTS[1][1], cz + LOWER_PTS[1][2]],   /* 下层槽中段 */
       [stopX, stopY, stopZ],                                          /* 取球位端 */
     ]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, py - RAIL_R - postY0, 10), acrylicMat);
-      post.position.set(px, (py - RAIL_R + postY0) / 2, pz); post.renderOrder = 7; scene.add(post);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, py - RAIL_FLOOR - postY0, 10), acrylicMat);
+      post.position.set(px, (py - RAIL_FLOOR + postY0) / 2, pz); post.renderOrder = 7; scene.add(post);
     }
   }
 
@@ -603,6 +642,7 @@ window.machines = machines;                       /* 调试/端到端验证钩�
 window.camera = camera; window.controls = controls;
 window.scene = scene; window.THREE = THREE;       /* 调试钩子：场景图/几何诊断 */
 window.RAIL_SEGS = RAIL_SEGS; window.RAIL_R = RAIL_R; window.RAIL_OPEN_COS = RAIL_OPEN_COS;
+window.RAIL_W = RAIL_W; window.RAIL_FLOOR = RAIL_FLOOR; window.RAIL_WALLTOP = RAIL_WALLTOP;
 
 /* ================= HUD ================= */
 const resultsEl = document.getElementById('results');
@@ -731,30 +771,74 @@ function railWallCollide(b, m, dt) {
     const dx = m.cx + c[0] - ax, dy = c[1] - ay, dz = m.cz + c[2] - az;
     const L = Math.hypot(dx, dy, dz), L2 = L * L;
     const ux = dx / L, uy = dy / L, uz = dz / L;
-    let t = ((b.p.x - ax) * dx + (b.p.y - ay) * dy + (b.p.z - az) * dz) / L2;
-    const rawT = t;
-    t = t < 0 ? 0 : (t > 1 ? 1 : t);
-    const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
-    const rx = b.p.x - px, ry = b.p.y - py, rz = b.p.z - pz;
-    const d = Math.hypot(rx, ry, rz);
-    const inBore = d < RAIL_R && d > 1e-6;
-    const touching = d > RAIL_WALL_GAP - 0.002;   /* 接触余量：贴面静置也算接触 */
-    if (inBore) {
-    /* 槽口区（与视觉开口同角度）：不做侧壁约束 —— 球可从上方落入槽内 */
-    const openTop = rawT > 0 && rawT < 1 && ry > RAIL_OPEN_COS * d;
-    if (rawT > 0 && rawT < 1 && touching && !openTop) {
-      if (d > RAIL_WALL_GAP) {
-        _sv.set(rx / d, ry / d, rz / d);
-        b.p.set(px + _sv.x * RAIL_WALL_GAP, py + _sv.y * RAIL_WALL_GAP, pz + _sv.z * RAIL_WALL_GAP);
-        const vn = b.v.dot(_sv);
-        if (vn > 0) b.v.addScaledVector(_sv, -(1 + 0.05) * vn);   /* 近非弹性法向接触 */
+    const rawT = ((b.p.x - ax) * dx + (b.p.y - ay) * dy + (b.p.z - az) * dz) / L2;
+    const wT = rawT * L;   /* 沿轴世界距离（rawT 是 0~1 参数，别和世界长度混用） */
+    /* rel = 球心到轴线（未截断投影）的垂线向量 */
+    const relx = b.p.x - (ax + dx * rawT), rely = b.p.y - (ay + dy * rawT), relz = b.p.z - (az + dz * rawT);
+    const d = Math.hypot(relx, rely, relz);
+    if (Math.abs(uy) > 0.7) {
+      /* ---- 竖直接引段：圆管膛，球心约束在轴 3.5cm 内自由下落（仅段内，无限圆柱会把球钉在半空） ---- */
+      if (wT > -0.02 && wT < L + 0.02 && d < RAIL_R && d > 1e-6) {
+        const touching = d > RAIL_WALL_GAP - 0.002;
+        if (touching) {
+          if (d > RAIL_WALL_GAP) {
+            _sv.set(relx / d, rely / d, relz / d);
+            b.p.set(ax + dx * rawT + _sv.x * RAIL_WALL_GAP, ay + dy * rawT + _sv.y * RAIL_WALL_GAP, az + dz * rawT + _sv.z * RAIL_WALL_GAP);
+            const vn = b.v.dot(_sv);
+            if (vn > 0) b.v.addScaledVector(_sv, -(1 + 0.05) * vn);
+          }
+          const vd = b.v.x * ux + b.v.y * uy + b.v.z * uz;
+          const cx2 = b.v.x - ux * vd, cy2 = b.v.y - uy * vd, cz2 = b.v.z - uz * vd;
+          const kC = 1 - 0.25, kR = 1 - 0.08 * dt;
+          b.v.set(ux * vd * kR + cx2 * kC, uy * vd * kR + cy2 * kC, uz * vd * kR + cz2 * kC);
+        }
       }
-      /* 滚动接触约束：环向分量（绕管打转）快速衰减，沿管切向只留滚动阻力 */
-      const vd = b.v.x * ux + b.v.y * uy + b.v.z * uz;
-      const cx2 = b.v.x - ux * vd, cy2 = b.v.y - uy * vd, cz2 = b.v.z - uz * vd;
-      const kC = 1 - 0.25, kR = 1 - 0.4 * dt;
-      b.v.set(ux * vd * kR + cx2 * kC, uy * vd * kR + cy2 * kC, uz * vd * kR + cz2 * kC);
-    }
+    } else {
+      /* ---- U 形滑槽段：底面 + 双侧壁（截面常量与视觉同源）。
+         约束只在球贴近本段截面时生效：段内 rawT、壁顶以下 rely<RAIL_WALLTOP（可从上方落入）、
+         槽底以下一个球径内 rely>-(FLOOR+R+0.05)（否则下轨的球会被上轨底面吸走）、
+         横向 |lat|<W+0.06（贴着槽口外侧的也接住） ---- */
+      const sx = -uz, sz = ux;
+      const lat = relx * sx + relz * sz;
+      if (wT > -0.06 && wT < L + 0.06
+        && rely < RAIL_WALLTOP && rely > -(RAIL_FLOOR + R_BALL + 0.05)
+        && lat > -(RAIL_W + 0.06) && lat < RAIL_W + 0.06) {
+        let hit = false;
+        const floorMin = R_BALL - RAIL_FLOOR;            /* 球心最低 = 槽底 + 球半径 */
+        if (rely < floorMin) {
+          b.p.y += floorMin - rely;
+          /* 槽底法向（⊥轴线、竖直平面内）：只去掉法向速度分量（e=0），
+             不吃轴向滚动分量 —— 旧写法 v.y*=-0.05 会把沿坡速度一起清掉，球滚不动 */
+          const nl = Math.hypot(ux * uy, 1 - uy * uy, uz * uy) || 1;
+          const nx0 = -ux * uy / nl, ny0 = (1 - uy * uy) / nl, nz0 = -uz * uy / nl;
+          const vnn = b.v.x * nx0 + b.v.y * ny0 + b.v.z * nz0;
+          if (vnn < 0) { b.v.x -= vnn * nx0; b.v.y -= vnn * ny0; b.v.z -= vnn * nz0; }
+          hit = true;
+        }
+        const wallMax = RAIL_W - R_BALL;                 /* 球心横向限位 = 半宽 - 球半径 */
+        const sx = -uz, sz = ux;                          /* 水平侧向（⊥轴线） */
+        const lat = relx * sx + relz * sz;
+        if (lat > wallMax) {
+          const corr = lat - wallMax;
+          b.p.x -= sx * corr; b.p.z -= sz * corr;
+          const vn = b.v.x * sx + b.v.z * sz;
+          if (vn > 0) { b.v.x -= 1.05 * vn * sx; b.v.z -= 1.05 * vn * sz; }
+          hit = true;
+        } else if (lat < -wallMax) {
+          const corr = -wallMax - lat;
+          b.p.x += sx * corr; b.p.z += sz * corr;
+          const vn = b.v.x * sx + b.v.z * sz;
+          if (vn < 0) { b.v.x -= 1.05 * vn * sx; b.v.z -= 1.05 * vn * sz; }
+          hit = true;
+        }
+        if (hit) {
+          /* 滚动接触：环向（绕轴打转）快速衰减，轴向留滚动阻力 */
+          const vd = b.v.x * ux + b.v.y * uy + b.v.z * uz;
+          const cx2 = b.v.x - ux * vd, cy2 = b.v.y - uy * vd, cz2 = b.v.z - uz * vd;
+          const kC = 1 - 0.25, kR = 1 - 0.08 * dt;
+          b.v.set(ux * vd * kR + cx2 * kC, uy * vd * kR + cy2 * kC, uz * vd * kR + cz2 * kC);
+        }
+      }
     }
     /* 端板：双侧挡板，独立于管膛判定 —— 球从端头外面撞上（如上轨末端洞掉落错过膛口）
        也会被接回管内，杜绝球跌出滑道后无限下坠消失 */
@@ -797,8 +881,9 @@ function stepRailBall(b, m, dt) {
   if (!b.placed) {
     const sp = b.v.length();
     const inLow = b.p.y < LOWER_PTS[0][1] + 0.06 && Math.abs(b.p.x - m.cx) < 1.35;
-    if (inLow && sp < 0.12) b.settle += dt; else b.settle = 0;
-    if (b.settle > 0.35) { b.placed = true; onBallPlaced(b, m); }
+    if (inLow && sp < 0.22) b.settle += dt; else b.settle = 0;
+    /* 入位判定：停稳 0.35s，或在下轨排队区超过 8s（队尾被前车挡住时速度抖动，避免永远判不了入位） */
+    if (b.settle > 0.35 || (inLow && b.railT > 8)) { b.placed = true; onBallPlaced(b, m); }
   }
 }
 
