@@ -308,18 +308,31 @@ function buildMachine(cfg) {
   topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
   const tray = new THREE.Mesh(new THREE.CylinderGeometry(1.34, 1.34, 0.06, 48), acrylicMat);
   tray.position.set(cx, 2.535, cz); tray.renderOrder = 5; scene.add(tray);   /* 透明亚克力底盘（底面2.505，避开底座顶面2.50共面） */
-  /* 球壳-台面衔接托座（对照真机红框）：透明漏斗形底托，球壳底部坐进托口，
-     两层滑道机构在托座前方/内部可见 */
-  const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 1.18, 0.85, 40, 1, true), acrylicMat);
-  collar.position.set(cx, 2.565 + 0.425, cz); collar.renderOrder = 6; scene.add(collar);
+  /* 球壳-底座衔接（对照真机红框）：没有独立托座 —— 球壳自身下部收口成喇叭裙边，
+     直接坐在底座顶面的透明亚克力盘上，滑道机构在收口裙边内部透出（见下方球壳构建） */
   const logo = new THREE.Mesh(new THREE.CircleGeometry(0.40, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
   logo.position.set(cx, 1.25, cz + 1.273);
   logo.rotation.x = -0.02; scene.add(logo);
 
-  /* ---- ② 球状搅拌室（Ø0.70m）：完整透明玻璃球（管子插进球壳，壳上不开口），
+  /* ---- ② 球状搅拌室：旋转体轮廓 = 上部完整球面 + 下部收口裙边（对照真机：
+          球壳下缘收成喇叭裙边直接坐在底座上，中间无任何独立托座），
           仅下前方出球孔由透明短管衔接 ---- */
-  const main = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32), glassMat);
+  const shellPts = [];
+  const skirtEnd = Math.acos(-0.62);                    /* 球面段画到纬度 y=-0.62R */
+  for (let i = 0; i <= 40; i++) {
+    const th = (i / 40) * skirtEnd;
+    shellPts.push(new THREE.Vector2(Math.sin(th) * R, Math.cos(th) * R));
+  }
+  /* 收口裙边：从球面纬度 -0.62R（r≈0.93R）向下微收，落在底座顶面托盘上（y=2.565） */
+  const skirtBottomY = 2.565 - cy;                      /* ≈ -1.695，坐进托盘顶面 */
+  const skirtTopR = Math.sin(skirtEnd) * R;             /* ≈ 0.927R */
+  const shellSkirt = new THREE.Vector2(0.85, skirtBottomY);
+  shellPts.push(new THREE.Vector2(
+    skirtTopR + (shellSkirt.x - skirtTopR) * 0.5,
+    -0.62 * R + (skirtBottomY + 0.62 * R) * 0.5));
+  shellPts.push(shellSkirt);
+  const main = new THREE.Mesh(new THREE.LatheGeometry(shellPts, 48), glassMat);
   main.position.set(cx, cy, cz); main.renderOrder = 6; scene.add(main);
   /* 赤道接缝（两个半球的可开合处，装饰） */
   const seam = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 64), blueDeep);
