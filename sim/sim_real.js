@@ -126,7 +126,7 @@ function stepInBall(b,m,dt){
   // 转子顶面支撑：出球孔正上方留缺口
   const floorC=m.discY+0.05+R_BALL;
   const holeD=Math.hypot(p[0]-m.cx-m.holeUX, p[2]-m.cz-m.holeUZ);
-  if(p[1]<floorC&&holeD>0.15){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
+  if(p[1]<floorC&&(holeD>0.15||!m.holeOpen)){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
 
   // 落球收拢：落到开口边缘外侧的球向心收
   if(m.loadOpen && p[1]>m.cy+0.4){

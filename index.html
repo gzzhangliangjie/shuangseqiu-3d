@@ -565,10 +565,11 @@ function stepInBall(b, m, dt) {
   if (spd > 5) v.multiplyScalar(5 / spd);        /* 限速防穿透 */
   p.addScaledVector(v, dt);
 
-  /* 转子顶面支撑：球坐在双转子上；出球孔正上方留缺口，球滚到那里就掉进孔 */
+  /* 转子顶面支撑：球坐在双转子上；出球孔正上方留缺口，球滚到那里就掉进孔。
+     缺口仅在开阀窗口(holeOpen)有效 —— 关阀时孔口被档杆封住，球不会漏下去 */
   const floorC = m.discY + 0.05 + R_BALL;
   const holeD = Math.hypot(p.x - m.cx - m.holeUX, p.z - m.cz - m.holeUZ);
-  if (p.y < floorC && holeD > 0.15) {
+  if (p.y < floorC && (holeD > 0.15 || !m.holeOpen)) {
     p.y = floorC;
     if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
   }
