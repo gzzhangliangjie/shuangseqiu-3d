@@ -5,7 +5,7 @@
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const RAIL_PTS = [
-  [0.00, 2.97, 0.60], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.86, 0.70], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 
@@ -75,9 +75,8 @@ function makeMachine(cfg){
     exitW:[cfg.cx+cfg.exitDir[0]*cfg.R, cfg.cy+cfg.exitDir[1]*cfg.R, cfg.cz+cfg.exitDir[2]*cfg.R],
     // 拨块：真实物理件（与页面视觉梯形块同尺寸同转速），碰撞实际拨动小球
     pegList:[
-      {r:cfg.rHub*0.62, rp:0.055, w:cfg.wInner, rot:0, n:4, ph:0.4},
-      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.18, rp:0.065, w:cfg.wOuter, rot:1, n:6, ph:0},
-      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.93, rp:0.065, w:cfg.wOuter, rot:1, n:6, ph:Math.PI/6},
+      {r:cfg.rHub*0.62, rp:0.055, w:cfg.wInner, rot:0, n:2, ph:0.4},
+      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.93, rp:0.065, w:cfg.wOuter, rot:1, n:4, ph:0},
     ],
     rotPhase:[0,0]};
 }
