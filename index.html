@@ -415,8 +415,8 @@ function buildMachine(cfg) {
       const n = i < rem ? per + 1 : per;
       if (by < byMin) byMin = by;
       rackDefs.push({ base: new THREE.Vector3(bx, by, bz), dir: new THREE.Vector3(0, 1, 0), n });
-      /* 管身：等长、竖直，底部斜切一刀（参考图：斜口管，前缘低后缘高，不是锥尖） */
-      const cutH = cfg.tubeR * 1.1;                    /* 斜切面高度差 */
+      /* 管身：等长竖直、顶部齐平，底部长斜切一刀（参考图：细长椭圆斜切口，前缘低后缘高） */
+      const cutH = cfg.tubeR * 2.4;                    /* 斜切面高度差（拉长切口） */
       const tubeGeo = new THREE.CylinderGeometry(cfg.tubeR, cfg.tubeR, L, 20, 1, true);
       {
         const pos = tubeGeo.attributes.position;
@@ -436,6 +436,14 @@ function buildMachine(cfg) {
       cap.position.set(bx, by, bz);
       cap.rotation.x = -Math.atan(cutH / 2 / cfg.tubeR);
       cap.renderOrder = 7; scene.add(cap);
+    }
+    /* 顶部方形盖板（参考图）：水平矩形板盖住整排管口（所有管 by 相同，顶部天然齐平） */
+    {
+      const chord = 2 * rt * Math.sin((N - 1) / 2 * step);
+      const topY = byMin + L;
+      const cover = new THREE.Mesh(new THREE.BoxGeometry(chord + 0.22, 0.035, cfg.tubeR * 2 + 0.16), acrylicMat);
+      cover.position.set(cx, topY + 0.0175, cz - rt);
+      cover.renderOrder = 7; scene.add(cover);
     }
     /* 闸门挡板（参考图）：水平托板贴在管底斜切口下方，摇奖前托住整排管里的球，
        开始摇奖时向下抽开松球；挡板从后方托住整排管子 */
