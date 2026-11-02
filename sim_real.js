@@ -4,22 +4,22 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端落球孔；缩短 + 9° 下坡 */
-  [0.00, 2.30, 0.70], [0.45, 2.235, 0.70], [0.85, 2.17, 0.70],
+const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端落球孔（坡度 ~5°，末端落在下轨右端内侧） */
+  [0.00, 2.52, 0.72], [0.225, 2.48, 0.70], [0.45, 2.44, 0.68],
 ];
-const LOWER_PTS = [   /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.25） → 左行下坡 → 取球位；坡度 8° */
-  [1.10, 1.92, 0.66], [0.25, 1.78, 0.52], [-0.55, 1.68, 0.44],
+const LOWER_PTS = [   /* 下层滑道：右端接球口（落差 0.16） → 左行缓坡 → 取球位；上移+坡度 ~4° */
+  [0.95, 2.30, 0.68], [0.20, 2.25, 0.58], [-0.55, 2.20, 0.48],
 ];
-const INTRO_PTS = [   /* 出球孔 → 上层滑道口的接引短槽 */
-  [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
+const INTRO_PTS = [
+  [0.00, 2.78, 0.79], [0.00, 2.52, 0.72],
 ];
 
 const CFG = [
   { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.66, discY:2.62, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
-    inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.7314,0.6820],
+    inletHalf:50*Math.PI/180, exitHalf:6.5*Math.PI/180, exitDir:[0,-0.7314,0.6820],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
   { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.66, discY:2.62, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
-    inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.7314,0.6820],
+    inletHalf:50*Math.PI/180, exitHalf:6.5*Math.PI/180, exitDir:[0,-0.7314,0.6820],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 
@@ -40,7 +40,7 @@ const RAIL_OPEN_COS = 0.5;                    /* 圆管段：法向朝上超过 
 /* U 形滑槽截面（物理与视觉同源，与 index.html 同值） */
 const RAIL_W = R_BALL + 0.012;                /* 槽内半宽 */
 const RAIL_FLOOR = 0.124;                     /* 槽底低于轴线（与圆管段同深，衔接处球心高度连续） */
-const RAIL_WALLTOP = 0.075;                   /* 侧壁顶高于轴线 */
+const RAIL_WALLTOP = -0.045;                  /* 侧壁顶（轴线下方 4.5cm，比静止球心低 1cm → 露出半球） */
 
 /* ---------- 预览架（与 index.html 同公式）：等长管环形排列插球壳后半部 ---------- */
 function buildRack(cfg){
@@ -199,16 +199,21 @@ function railWallCollide(b,m,dt){
         b.v[0]=ux*vd*kR+cx2*kC; b.v[1]=uy*vd*kR+cy2*kC; b.v[2]=uz*vd*kR+cz2*kC;
       }
     } else {
-      /* U 形滑槽：底面 + 双侧壁。约束只在球贴近本段截面时生效（段内/壁顶以下/
+      /* U 形滑槽：底面 + 低侧壁。约束只在球贴近本段截面时生效（段内/未越过壁顶/
          槽底以下一个球径内/横向贴近），否则下轨的球会被上轨底面吸走 */
       const sx=-uz, sz=ux;
       const lat=relx*sx+relz*sz;
-      if(wT>-0.06&&wT<L+0.06
-        &&rely<RAIL_WALLTOP&&rely>-(RAIL_FLOOR+R_BALL+0.05)
+      /* 约束窗口=槽体真实范围（5mm 接缝余量）：侧壁不能伸出洞口，否则会把下轨的球锁住 */
+      /* rely 下限只到「贴底穿透一个球半径」：下层的球不能被本层槽底吸上来 */
+      const floorMin0=R_BALL-RAIL_FLOOR;
+      if(wT>-0.005&&wT<L+0.005
+        &&rely<RAIL_WALLTOP+R_BALL&&rely>floorMin0-R_BALL
         &&lat>-(RAIL_W+0.06)&&lat<RAIL_W+0.06){
       let hit=false;
-      const floorMin=R_BALL-RAIL_FLOOR;
-      if(rely<floorMin){
+      const floorMin=floorMin0;
+      /* 底面支撑只在真实槽段内：滚出落球洞即自由掉落（与视觉槽底同界） */
+      const inFloor=wT>-0.005&&wT<L+0.005;
+      if(inFloor&&rely<floorMin){
         b.p[1]+=floorMin-rely;
         /* 槽底法向（⊥轴线）：只去法向速度（e=0），不吃轴向滚动分量 */
         const nl=Math.hypot(ux*uy,1-uy*uy,uz*uy)||1;
@@ -217,7 +222,10 @@ function railWallCollide(b,m,dt){
         if(vnn<0){ b.v[0]-=vnn*nx0; b.v[1]-=vnn*ny0; b.v[2]-=vnn*nz0; }
         hit=true;
       }
-      const wallMax=RAIL_W-R_BALL;
+      /* 低侧壁：球心高出壁顶后，球的水平截面半径缩小 → 可偏移量放大（球腰仍被挡住） */
+      const hAbove=Math.max(0,rely-RAIL_WALLTOP);
+      const rCut=Math.sqrt(Math.max(0,R_BALL*R_BALL-hAbove*hAbove));
+      const wallMax=Math.max(0.004,RAIL_W-rCut);
       if(lat>wallMax){
         const corr=lat-wallMax;
         b.p[0]-=sx*corr; b.p[2]-=sz*corr;
@@ -232,9 +240,10 @@ function railWallCollide(b,m,dt){
         hit=true;
       }
       if(hit){
+        /* 轴向滚动阻力很小（kR 0.03/s），缓坡（4°）也能滚完全程 */
         const vd=b.v[0]*ux+b.v[1]*uy+b.v[2]*uz;
         const cx2=b.v[0]-ux*vd, cy2=b.v[1]-uy*vd, cz2=b.v[2]-uz*vd;
-        const kC=1-0.25, kR=1-0.08*dt;
+        const kC=1-0.25, kR=1-0.03*dt;
         b.v[0]=ux*vd*kR+cx2*kC; b.v[1]=uy*vd*kR+cy2*kC; b.v[2]=uz*vd*kR+cz2*kC;
       }
       }
@@ -289,15 +298,18 @@ function stepRailBall(b,m,dt){
     const a=LOWER_PTS[0], c=LOWER_PTS[1];
     const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
     const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;
-    const t=0.36;
+    const t=0.43;   /* x≈0.70：紧挨队尾右侧，落回槽内继续滚向队列 */
     b.p[0]=ax+dx*t; b.p[1]=ay+dy*t; b.p[2]=az+dz*t;
     b.v[0]=0; b.v[1]=0; b.v[2]=0; b.settle=0; b.railT=0;
   }
   if(!b.placed){
     const sp=Math.hypot(b.v[0],b.v[1],b.v[2]);
     const inLow=b.p[1]<LOWER_PTS[0][1]+0.06&&Math.abs(b.p[0]-m.cx)<1.35;
-    if(inLow&&sp<0.22) b.settle+=dt; else b.settle=0;
-    if(b.settle>0.35||(inLow&&b.railT>8)) b.placed=true;
+    /* 入位 = 滚进排队区（落球洞正下方不算，防止堵洞死锁） */
+    const inQueue=b.p[0]-m.cx<LOWER_PTS[0][0]-0.2;
+    if(inLow&&inQueue&&sp<0.12) b.settle+=dt; else b.settle=0;
+    /* 入位=真停稳 1.2s（阈值太松会让球刚落到接球口就判入位、堵住洞口） */
+    if(b.settle>1.2||(inLow&&inQueue&&b.railT>10)) b.placed=true;
   }
 }
 
