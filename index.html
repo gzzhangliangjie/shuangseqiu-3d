@@ -361,27 +361,43 @@ function buildMachine(cfg) {
   }
   const skirtBottomY = 2.42 - cy;                       /* 直筒垂直坐进托盘顶面(2.42)，球底与蓝座间留透明柜身段 */
   shellPts.push(new THREE.Vector2(skirtR, skirtBottomY));
-  const main = new THREE.Mesh(new THREE.LatheGeometry(shellPts, 48), glassMat);
+  const mainGeo = new THREE.LatheGeometry(shellPts, 48);
+  /* 出球孔在壳面上真开洞：Lathe 的 v=0 在球顶、u=0 在 +Z 方向接缝（孔心就在 +Z，
+     洞跨接缝 → 左右各画半圆拼成整洞）。
+     关键：alphaTest 比较的是「opacity × alphaMap」后的最终 alpha，玻璃 opacity=0.09，
+     阈值必须 < 0.09 —— 之前阈值写 0.45 导致整壳被丢弃（壳直接消失）。 */
+  {
+    const thHole = Math.acos(cfg.exitDir.y);            /* 孔心天顶角 */
+    const phHalf = Math.asin(Math.sin(cfg.exitHalf) / Math.sin(thHole));
+    const vC = (thHole / thCut) * 40 / 41, dV = (cfg.exitHalf / thCut) * 40 / 41;
+    const acv = document.createElement('canvas'); acv.width = 1024; acv.height = 1024;
+    const actx = acv.getContext('2d');
+    actx.fillStyle = '#fff'; actx.fillRect(0, 0, 1024, 1024);
+    actx.fillStyle = '#000';
+    const cyPx = (1 - vC) * 1024, ryPx = dV * 1024, rxEy = phHalf / (Math.PI * 2) * 1024;
+    for (const hx of [0, 1024]) {          /* flipY 默认 true：canvas 顶行 → v=1（球顶） */
+      actx.beginPath();
+      actx.ellipse(hx, cyPx, rxEy, ryPx, 0, 0, Math.PI * 2);
+      actx.fill();
+    }
+    const shellMat = glassMat.clone();
+    shellMat.alphaMap = new THREE.CanvasTexture(acv);
+    shellMat.alphaTest = 0.03;
+    shellMat.needsUpdate = true;
+    var main = new THREE.Mesh(mainGeo, shellMat);
+  }
   main.position.set(cx, cy, cz); main.renderOrder = 6; scene.add(main);
   /* 赤道接缝（两个半球的可开合处，装饰） */
   const seam = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 64), blueDeep);
   seam.rotation.x = Math.PI / 2; seam.position.set(cx, cy, cz); scene.add(seam);
 
-  /* 出球口：球壳下前方一个简单圆形出口。孔边一圈白色切边（亚克力开孔后边缘发白，
-     这也是洞的轮廓线），不接任何外伸短管——球从球壳上这个圆孔直接落下 */
+  /* 出球口：球壳下前方一个简单圆形出口——壳面真开洞（alphaMap），不加白圈、
+     不加挡板：玻璃本身近乎全透明，任何贴在孔口的圈/板看起来都是悬浮的异物。
+     球从壳上这个圆孔直接落下 */
   const exR = R * Math.sin(cfg.exitHalf);
-  const rimMat = new THREE.MeshStandardMaterial({ color: 0xf2f7ff, roughness: 0.4, metalness: 0.05, transparent: true, opacity: 0.9 });
-  const exRim = new THREE.Mesh(new THREE.TorusGeometry(exR, 0.012, 8, 40), rimMat);
-  exRim.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R - 0.004);
-  exRim.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), cfg.exitDir);
-  exRim.renderOrder = 6; scene.add(exRim);
+  /* 挡板（翻板）已去掉——出球口就是壳面上一个简单的圆孔，白圈只是孔沿切边。
+     valvePivot 仅供动画代码引用，保留空组防止引用报错 */
   const valvePivot = new THREE.Group();
-  valvePivot.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R - 0.02);   /* 贴在孔口平面上 */
-  valvePivot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
-  const valve = new THREE.Mesh(new THREE.CylinderGeometry(exR + 0.018, exR + 0.018, 0.035, 24),
-    new THREE.MeshPhysicalMaterial({ color: 0xbfd8ff, metalness: 0, roughness: 0.08, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false, clearcoat: 1, envMapIntensity: 1.1 }));
-  valve.position.y = 0.02; valve.renderOrder = 6; valvePivot.add(valve);
-  scene.add(valvePivot);
 
   /* ---- 搅拌室底部（对照真机渲染图）：大托盘 + 托盘上的小型双转子 + 鼓形托壳藏电机。
           球坐在托盘上；内盘/外环带尺寸很小（Ø0.40 / Ø0.90，球径 Ø2.36），
@@ -584,26 +600,25 @@ function buildMachine(cfg) {
         new THREE.Matrix4().makeBasis(dir, up, side));
 
       if (vertical) {
-        /* 竖直孔段 = 层间落球洞：孔壁就是物理膛本身。
-           注意圆柱轴必须对齐段方向——直接 copy 槽体四元数会退化（竖直段的 up 落到 Z 轴），
-           孔壁整个横躺成「横向的环」。 */
-        const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.004, 28, 1, true);
-        const mesh = new THREE.Mesh(geo, railMat);
-        mesh.position.copy(mid);
-        mesh.quaternion.setFromUnitVectors(_Y, dir);
-        mesh.renderOrder = 7; scene.add(mesh);
-        /* 孔口限位边：在孔口「来球方向的对面」立一段矮挡圈（物理里有同一条约束），
-           球冲过头撞上它就被挡回孔口，顺着洞掉下去，不会从孔沿溜过去 */
+        /* 层间落球洞 = 滑槽的「一体出料口」：底板到洞口为止（洞就是槽底消失的那一段），
+           两侧壁 + 远端限位墙延续同一截面外廓、与槽体端面严格对接（零重叠、
+           不另立圆管和挡圈），底部敞开 —— 球滚出底板边缘就顺着洞掉到下层，
+           远端墙高出球心 = 限位，球冲不出去。 */
+        flushRail();
         if (prevH) {
-          /* 限位边与孔壁一体：同轴同半径套在孔口上段（覆盖物理约束带 wT -2cm..+7cm），
-             下端与孔壁重叠 5cm、上端只高出孔口 2cm——看起来就是孔管自身翻出的半圈厚边，
-             不是贴上去的独立挡板。开口朝来球方向（球从这里滚进洞） */
-          const ang = Math.atan2(prevH.x, prevH.z);   /* CylinderGeometry: theta=0 指向 +Z */
-          const lip = new THREE.Mesh(
-            new THREE.CylinderGeometry(RAIL_R + 0.004, RAIL_R + 0.004, 0.09, 28, 1, true,
-              ang - Math.PI * 0.42, Math.PI * 0.84), railMat);
-          lip.position.copy(A).addScaledVector(_Y, -0.025);
-          lip.renderOrder = 7; scene.add(lip);
+          const W2c = RAIL_W + 0.011, Tc = 0.022, Lc = 0.07;
+          const cs = new THREE.Shape();
+          cs.moveTo(0, -W2c); cs.lineTo(Lc, -W2c); cs.lineTo(Lc, W2c); cs.lineTo(0, W2c);
+          cs.lineTo(0, W2c - Tc); cs.lineTo(Lc - Tc, W2c - Tc); cs.lineTo(Lc - Tc, -W2c + Tc);
+          cs.lineTo(0, -W2c + Tc); cs.closePath();
+          const mesh = new THREE.Mesh(
+            new THREE.ExtrudeGeometry(cs, { depth: 0.16, bevelEnabled: false }), railMat);
+          mesh.position.copy(A);
+          mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+            new THREE.Vector3(prevH.x, 0, prevH.z),
+            new THREE.Vector3(-prevH.z, 0, prevH.x),
+            new THREE.Vector3(0, -1, 0)));
+          mesh.renderOrder = 7; scene.add(mesh);
         }
       } else {
         /* 共线续接：下一段从上一根的末端、同方向继续 → 并入同一根整体挤出体 */
@@ -618,17 +633,6 @@ function buildMachine(cfg) {
         }
       }
       if (!vertical) { prevH = new THREE.Vector3(dir.x, 0, dir.z); if (prevH.lengthSq() > 1e-8) prevH.normalize(); }
-      if (vertical) {
-        /* 竖直段打断滑槽合并（洞是独立一件）；闭端才补圆端板（当前竖直段两端都开，一般不触发） */
-        flushRail();
-        for (const [P, closed] of [[A, !openA], [B, !openB]]) {
-          if (!closed) continue;
-          const plate = new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), railMat);
-          plate.position.copy(P);
-          plate.quaternion.setFromUnitVectors(_Y, dir);
-          plate.renderOrder = 7; scene.add(plate);
-        }
-      }
     }
     flushRail();
     /* 左端挡块 = 最后一段的闭端端板（上面已画），不再单独放一块外漂的板 */
