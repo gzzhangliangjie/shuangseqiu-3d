@@ -61,7 +61,7 @@
 </div>
 <div id="legend">
   <div><b>真机复刻 · 法国 RYO CATTEAU「勿忘草」Myosotis</b></div>
-  <div>整机 2.1m × 0.75m：底座 0.77 / 搅拌室 0.83 / 预览架 0.42</div>
+  <div>整机 2.1m × 0.75m：底座 0.31（=搅拌轮盘外径） / 搅拌室 0.83 / 预览架 0.42</div>
   <div>① 号码球预览架：等长透明管环形排列插入球壳后半部，管底削尖</div>
   <div>② 球状搅拌室 Ø70cm：底部双盘逆向旋转搅拌（专利）</div>
   <div>③ 出球口档杆 → 出球轨道（开一颗、过一颗、关阀）</div>
@@ -299,21 +299,24 @@ function buildMachine(cfg) {
   const cosExit = Math.cos(cfg.exitHalf);
   const sphBottom = cy - R;
 
-  /* ---- ④ 底座：深蓝直筒圆柱（对照真机：底座是一小块，直径≈0.76 球径，
-          明显窄于球壳；等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
-  const footRing = new THREE.Mesh(new THREE.CylinderGeometry(0.94, 0.98, 0.12, 48), blueDeep);
+  /* ---- ④ 底座：深蓝直筒圆柱（对照真机：底座圆柱外半径 = 搅拌轮盘外半径 rOuter，
+          正好托住轮盘外缘；等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
+  const footRing = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.60, 0.12, 48), blueDeep);
   footRing.position.set(cx, 0.06, cz); scene.add(footRing);
-  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(0.90, 0.90, 2.44, 48), blueBase);
+  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(0.53, 0.53, 2.44, 48), blueBase);
   baseBody.position.set(cx, 0.12 + 1.22, cz); scene.add(baseBody);           /* 顶面 y=2.50，正好托住玻璃球底 */
-  const topTrim = new THREE.Mesh(new THREE.TorusGeometry(0.90, 0.045, 10, 64), blueDeep);
+  const topTrim = new THREE.Mesh(new THREE.TorusGeometry(0.53, 0.045, 10, 64), blueDeep);
   topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
-  const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.06, 48), acrylicMat);
+  const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.06, 48), acrylicMat);
   tray.position.set(cx, 2.535, cz); tray.renderOrder = 5; scene.add(tray);   /* 透明亚克力底盘（底面2.505，避开底座顶面2.50共面） */
+  /* 搅拌组件中心支撑柱：从底座顶面托起鼓形托壳（真机托盘下方的透明支柱） */
+  const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.52, 24, 1, true), acrylicMat);
+  spine.position.set(cx, 2.565 + 0.26, cz); spine.renderOrder = 6; scene.add(spine);
   /* 球壳-底座衔接（对照真机红框）：没有独立托座 —— 球壳自身下部收口成喇叭裙边，
      直接坐在底座顶面的透明亚克力盘上，滑道机构在收口裙边内部透出（见下方球壳构建） */
-  const logo = new THREE.Mesh(new THREE.CircleGeometry(0.30, 40),
+  const logo = new THREE.Mesh(new THREE.CircleGeometry(0.20, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
-  logo.position.set(cx, 1.25, cz + 0.903);
+  logo.position.set(cx, 1.25, cz + 0.533);
   logo.rotation.x = -0.02; scene.add(logo);
 
   /* ---- ② 球状搅拌室：旋转体轮廓 = 上部完整球面 + 下部收口裙边（对照真机：
@@ -325,10 +328,11 @@ function buildMachine(cfg) {
     const th = (i / 40) * skirtEnd;
     shellPts.push(new THREE.Vector2(Math.sin(th) * R, Math.cos(th) * R));
   }
-  /* 收口裙边：从球面纬度 -0.62R（r≈0.93R）向下微收，落在底座顶面托盘上（y=2.565） */
+  /* 收口裙边：从球面纬度 -0.62R（r≈0.93R）向下收窄，落在底座顶面托盘上（y=2.565），
+     下缘半径 0.50 略小于柜半径 0.53（=搅拌轮盘外半径），坐进顶面内侧 */
   const skirtBottomY = 2.565 - cy;                      /* ≈ -1.695，坐进托盘顶面 */
   const skirtTopR = Math.sin(skirtEnd) * R;             /* ≈ 0.927R */
-  const shellSkirt = new THREE.Vector2(0.85, skirtBottomY);
+  const shellSkirt = new THREE.Vector2(0.50, skirtBottomY);
   shellPts.push(new THREE.Vector2(
     skirtTopR + (shellSkirt.x - skirtTopR) * 0.5,
     -0.62 * R + (skirtBottomY + 0.62 * R) * 0.5));
