@@ -111,7 +111,7 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 
 const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
-camera.position.set(0, 5.4, 12.9);
+camera.position.set(0, 4.8, 12.9);
 
 /* 后期：轻辉光 */
 const composer = new EffectComposer(renderer);
@@ -120,7 +120,7 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.
 composer.addPass(bloom);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 3.95, 0);
+controls.target.set(0, 3.35, 0);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.52;
 controls.minDistance = 6;
@@ -186,13 +186,13 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
 const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端，微下坡向右；末端=洞 */
-  [0.00, 2.90, 0.70], [0.60, 2.88, 0.70], [1.18, 2.86, 0.70],
+  [0.00, 2.30, 0.70], [0.60, 2.28, 0.70], [1.18, 2.26, 0.70],
 ];
-const LOWER_PTS = [  /* 下层滑道：右端接球口（上轨末端洞正下偏右） → 左行下坡 → 取球位 */
-  [1.45, 2.76, 0.70], [0.00, 2.72, 0.52], [-1.10, 2.69, 0.52],
+const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，捕获抛球落点谱） → 左行下坡 → 取球位 */
+  [1.28, 2.16, 0.70], [0.00, 2.12, 0.52], [-1.10, 2.09, 0.52],
 ];
 const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
-  [0.00, 3.29, 0.68], [0.00, 2.90, 0.70],
+  [0.00, 2.69, 0.68], [0.00, 2.30, 0.70],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
@@ -202,24 +202,24 @@ const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
 const MACH_CFG = [
   {
     key: 'red', cx: -3.8, cz: 0, count: 33, color: '#d0342c', label: '1 号机 · 红球区',
-    R: 1.18, cy: 4.26,
+    R: 1.18, cy: 3.66,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 12 * Math.PI / 180,            /* 底部小孔：孔径≈1.5×球径，只允许一球通过 */
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
-    discY: 3.22, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
+    discY: 2.62, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
   {
     key: 'blue', cx: 3.8, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
-    R: 1.18, cy: 4.26,
+    R: 1.18, cy: 3.66,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 12 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),
-    discY: 3.22, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
+    discY: 2.62, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -299,37 +299,36 @@ function buildMachine(cfg) {
   const cosExit = Math.cos(cfg.exitHalf);
   const sphBottom = cy - R;
 
-  /* ---- ④ 底座：深蓝直筒圆柱（对照真机：底座圆柱外半径 = 搅拌轮盘外半径 rOuter，
-          正好托住轮盘外缘；等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
+  /* ---- ④ 底座（对照真机近景）：最底下只有一条【矮蓝座】，蓝座上面是整段
+          【透明柜身】（滑道、出球机构都藏在这段里），球壳坐在透明柜身顶上；
+          蓝色从不接触球壳。柜身/蓝座半径 = 搅拌轮盘外半径 rOuter ---- */
   const footRing = new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.58, 0.12, 48), blueDeep);
   footRing.position.set(cx, 0.06, cz); scene.add(footRing);
-  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(0.53, 0.53, 2.44, 48), blueBase);
-  baseBody.position.set(cx, 0.12 + 1.22, cz); scene.add(baseBody);           /* 顶面 y=2.50，正好托住玻璃球底 */
+  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(0.53, 0.53, 0.50, 48), blueBase);
+  baseBody.position.set(cx, 0.12 + 0.25, cz); scene.add(baseBody);           /* 蓝色矮座：顶面 y=0.62 */
   const topTrim = new THREE.Mesh(new THREE.TorusGeometry(0.53, 0.045, 10, 64), blueDeep);
-  topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
-  const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.68, 0.06, 48), acrylicMat);
-  tray.position.set(cx, 2.535, cz); tray.renderOrder = 5; scene.add(tray);   /* 透明亚克力底盘：边缘略伸出直筒(0.65) */
-  /* 搅拌组件中心支撑柱：从底座顶面托起鼓形托壳（真机托盘下方的透明支柱） */
-  const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.52, 24, 1, true), acrylicMat);
-  spine.position.set(cx, 2.565 + 0.26, cz); spine.renderOrder = 6; scene.add(spine);
-  /* 球壳-底座衔接（对照真机红框）：没有独立托座 —— 球壳自身下部收口成喇叭裙边，
-     直接坐在底座顶面的透明亚克力盘上，滑道机构在收口裙边内部透出（见下方球壳构建） */
+  topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 0.62, cz); scene.add(topTrim);
+  /* 透明柜身：从蓝座顶(0.62)一直通到球壳托盘底(2.36)，滑道在其前壁外/内部 */
+  const bodyTube = new THREE.Mesh(new THREE.CylinderGeometry(0.53, 0.53, 1.74, 48, 1, true), acrylicMat);
+  bodyTube.position.set(cx, 0.65 + 0.87, cz); bodyTube.renderOrder = 5; scene.add(bodyTube); /* 0.65 → 2.39 */
+  const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.56, 0.56, 0.06, 48), acrylicMat);
+  tray.position.set(cx, 2.39, cz); tray.renderOrder = 5; scene.add(tray);   /* 托盘顶面 y=2.42：球壳直筒坐上面 */
   const logo = new THREE.Mesh(new THREE.CircleGeometry(0.20, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
-  logo.position.set(cx, 1.25, cz + 0.533);
+  logo.position.set(cx, 0.37, cz + 0.533);
   logo.rotation.x = -0.02; scene.add(logo);
 
   /* ---- ② 球状搅拌室：旋转体轮廓 = 上部完整球面 + 下部竖直圆柱筒（对照真机：
           球壳下半段是直筒壁、垂直落到托盘上，不是喇叭/锥形收口），
           仅下前方出球孔由透明短管衔接 ---- */
   const shellPts = [];
-  const skirtR = 0.65;                                  /* 直筒半径：罩住转轮(0.53)，滑槽贴壁穿过 */
-  const skirtStartY = -Math.sqrt(R * R - skirtR * skirtR); /* 球面→直筒切点 y≈-0.835R */
+  const skirtR = cfg.rOuter;                            /* 直筒半径 = 搅拌轮盘外半径(0.53)，转轮外缘贴筒壁 */
+  const skirtStartY = -Math.sqrt(R * R - skirtR * skirtR); /* 球面→直筒切点 y≈-1.054R */
   for (let i = 0; i <= 40; i++) {
     const th = (i / 40) * Math.acos(skirtStartY / R);
     shellPts.push(new THREE.Vector2(Math.sin(th) * R, Math.cos(th) * R));
   }
-  const skirtBottomY = 2.565 - cy;                      /* ≈ -1.695，直筒垂直坐进托盘顶面 */
+  const skirtBottomY = 2.42 - cy;                       /* 直筒垂直坐进托盘顶面(2.42)，球底与蓝座间留透明柜身段 */
   shellPts.push(new THREE.Vector2(skirtR, skirtBottomY));
   const main = new THREE.Mesh(new THREE.LatheGeometry(shellPts, 48), glassMat);
   main.position.set(cx, cy, cz); main.renderOrder = 6; scene.add(main);
@@ -525,8 +524,8 @@ function buildMachine(cfg) {
     const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
     const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.30, TUBE_R * 2 + 0.05), acrylicMat);
     stopPlate.position.set(stopX + 0.055, stopY - 0.02, stopZ); stopPlate.renderOrder = 7; scene.add(stopPlate);
-    /* 支撑柱：从底盘 2.565 顶到滑道底部 */
-    const postY0 = 2.565;
+    /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
+    const postY0 = 0.62;
     for (const [px, py, pz] of [
       [cx + 0.60, UPPER_PTS[1][1], cz + 0.70],          /* 上层槽中段 */
       [cx + 0.00, LOWER_PTS[1][1], cz + 0.52],          /* 下层槽中段 */

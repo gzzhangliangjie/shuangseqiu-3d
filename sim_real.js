@@ -5,20 +5,20 @@
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端，微下坡向右；末端=洞 */
-  [0.00, 2.90, 0.70], [0.60, 2.88, 0.70], [1.18, 2.86, 0.70],
+  [0.00, 2.30, 0.70], [0.60, 2.28, 0.70], [1.18, 2.26, 0.70],
 ];
 const LOWER_PTS = [   /* 下层滑道：右端接球口（上轨末端洞正下偏右） → 左行下坡 → 取球位 */
-  [1.45, 2.76, 0.70], [0.00, 2.72, 0.52], [-1.10, 2.69, 0.52],
+  [1.28, 2.16, 0.70], [0.00, 2.12, 0.52], [-1.10, 2.09, 0.52],
 ];
 const INTRO_PTS = [   /* 出球孔 → 上层滑道口的接引短槽 */
-  [0.00, 3.29, 0.68], [0.00, 2.90, 0.70],
+  [0.00, 2.69, 0.68], [0.00, 2.30, 0.70],
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:4.26, discY:3.22, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.66, discY:2.62, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:4.26, discY:3.22, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.66, discY:2.62, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
