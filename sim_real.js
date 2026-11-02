@@ -7,8 +7,8 @@ const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端落球孔；缩短 + 6° 下坡 */
   [0.00, 2.30, 0.70], [0.45, 2.255, 0.70], [0.85, 2.21, 0.70],
 ];
-const LOWER_PTS = [   /* 下层滑道：右端接球口（正对上轨末端洞） → 左行下坡 → 取球位；缩短 + 坡度加倍 */
-  [0.95, 2.12, 0.70], [0.10, 2.05, 0.58], [-0.65, 2.00, 0.52],
+const LOWER_PTS = [   /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.3 清晰可见） → 左行下坡 → 取球位 */
+  [1.12, 1.92, 0.66], [0.25, 1.83, 0.52], [-0.55, 1.77, 0.44],
 ];
 const INTRO_PTS = [   /* 出球孔 → 上层滑道口的接引短槽 */
   [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
@@ -275,7 +275,7 @@ function stepRailBall(b,m,dt){
   railWallCollide(b,m,dt);
   railStopLip(b,m);
   /* 兜底防丢球：滑道球若意外跌出管膛/搁浅轨外，重置回下轨右段空白区（避开取球位队列） */
-  if(b.p[1]<1.9 || (!b.placed&&b.railT>12)){
+  if(b.p[1]<LOWER_PTS[0][1]-0.45 || (!b.placed&&b.railT>12)){
     const a=LOWER_PTS[0], c=LOWER_PTS[1];
     const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
     const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;

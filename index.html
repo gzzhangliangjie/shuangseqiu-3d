@@ -188,8 +188,9 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
 const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球孔；缩短 + 6° 下坡 */
   [0.00, 2.30, 0.70], [0.45, 2.255, 0.70], [0.85, 2.21, 0.70],
 ];
-const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞） → 左行下坡 → 取球位；缩短 + 坡度加倍（滚得更快） */
-  [0.95, 2.12, 0.70], [0.10, 2.05, 0.58], [-0.65, 2.00, 0.52],
+const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.3 清晰可见） → 左行下坡 → 取球位；
+                        明显低于上轨，两轨在画面上不再重叠 */
+  [1.12, 1.92, 0.66], [0.25, 1.83, 0.52], [-0.55, 1.77, 0.44],
 ];
 const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
   [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
@@ -601,6 +602,7 @@ MACH_CFG.forEach(buildMachine);
 window.machines = machines;                       /* 调试/端到端验证钩子 */
 window.camera = camera; window.controls = controls;
 window.scene = scene; window.THREE = THREE;       /* 调试钩子：场景图/几何诊断 */
+window.RAIL_SEGS = RAIL_SEGS; window.RAIL_R = RAIL_R; window.RAIL_OPEN_COS = RAIL_OPEN_COS;
 
 /* ================= HUD ================= */
 const resultsEl = document.getElementById('results');
@@ -784,7 +786,7 @@ function stepRailBall(b, m, dt) {
   railWallCollide(b, m, dt);
   /* 兜底防丢球：滑道球若意外跌出管膛（双层端板之外的最后防线），重新放回下轨右段空白区
      （避开取球位队列，球自然滚向队尾入位） */
-  if (b.p.y < 1.9 || (!b.placed && b.railT > 12)) {
+  if (b.p.y < LOWER_PTS[0][1] - 0.45 || (!b.placed && b.railT > 12)) {
     const a = LOWER_PTS[0], c = LOWER_PTS[1];
     const ax = m.cx + a[0], ay = a[1], az = m.cz + a[2];
     const dx = m.cx + c[0] - ax, dy = c[1] - ay, dz = m.cz + c[2] - az;
