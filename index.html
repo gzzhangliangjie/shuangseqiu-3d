@@ -192,7 +192,7 @@ const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞�
   [1.28, 2.16, 0.70], [0.00, 2.12, 0.52], [-1.10, 2.09, 0.52],
 ];
 const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
-  [0.00, 2.69, 0.68], [0.00, 2.30, 0.70],
+  [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
@@ -205,7 +205,7 @@ const MACH_CFG = [
     R: 1.18, cy: 3.66,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 12 * Math.PI / 180,            /* 底部小孔：孔径≈1.5×球径，只允许一球通过 */
-    exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
+    exitDir: new THREE.Vector3(0, -0.7314, 0.6820).normalize(),  /* 出球孔开在球壳下前方弧面上（43°，整个孔避开球面/直筒切点） */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
     discY: 2.62, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
@@ -218,7 +218,7 @@ const MACH_CFG = [
     R: 1.18, cy: 3.66,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 12 * Math.PI / 180,
-    exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),
+    exitDir: new THREE.Vector3(0, -0.7314, 0.6820).normalize(),
     discY: 2.62, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -637,7 +637,7 @@ function stepInBall(b, m, dt) {
     _dir.subVectors(m.exitW, p);
     const dd = _dir.length();
     if (dd < m.R * 1.8) {
-      v.addScaledVector(_dir.normalize(), 55 * (1 - dd / (m.R * 1.8)) * dt);
+      v.addScaledVector(_dir.normalize(), 70 * (1 - dd / (m.R * 1.8)) * dt);
     }
   }
 
@@ -727,7 +727,7 @@ function railWallCollide(b, m, dt) {
     const d = Math.hypot(rx, ry, rz);
     const inBore = d < TUBE_BORE && d > 1e-6;
     const touching = d > TUBE_IN - 0.002;        /* 接触余量：贴面静置也算接触 */
-    if (!inBore) continue;
+    if (inBore) {
     /* 开口槽：法向朝上（球在轴线上方的槽口区）不做侧壁约束 —— 球可从上方落入 */
     const openTop = rawT > 0 && rawT < 1 && ry > 0.35 * d;
     if (rawT > 0 && rawT < 1 && touching && !openTop) {
@@ -743,13 +743,22 @@ function railWallCollide(b, m, dt) {
       const kC = 1 - 0.25, kR = 1 - 0.4 * dt;
       b.v.set(ux * vd * kR + cx2 * kC, uy * vd * kR + cy2 * kC, uz * vd * kR + cz2 * kC);
     }
-    /* 端板：只看球心到端面的有向距离（不看轴向投影），球心停在板前 R_BALL */
+    }
+    /* 端板：双侧挡板，独立于管膛判定 —— 球从端头外面撞上（如上轨末端洞掉落错过膛口）
+       也会被接回管内，杜绝球跌出滑道后无限下坠消失 */
     for (const end of [openA ? null : [ax, ay, az, -ux, -uy, -uz], openB ? null : [ax + dx, ay + dy, az + dz, ux, uy, uz]]) {
       if (!end) continue;
       const pen = (b.p.x - end[0]) * end[3] + (b.p.y - end[1]) * end[4] + (b.p.z - end[2]) * end[5];
-      if (pen > -R_BALL && pen < 0) {
-        const corr = -R_BALL - pen;
-        b.p.x += end[3] * corr; b.p.y += end[4] * corr; b.p.z += end[5] * corr;
+      const distEnd = Math.hypot(b.p.x - end[0], b.p.y - end[1], b.p.z - end[2]);
+      const inside = pen > -R_BALL && pen < 0 && distEnd < TUBE_BORE + 0.02;
+      const outside = pen >= 0 && pen < R_BALL + 0.06 && distEnd < 0.35;
+      if (inside || outside) {
+        if (outside) {   /* 从外面撞板：放回板内侧一个球半径处 */
+          b.p.x = end[0] - end[3] * R_BALL; b.p.y = end[1] - end[4] * R_BALL; b.p.z = end[2] - end[5] * R_BALL;
+        } else {
+          const corr = -R_BALL - pen;
+          b.p.x += end[3] * corr; b.p.y += end[4] * corr; b.p.z += end[5] * corr;
+        }
         const vn = b.v.x * end[3] + b.v.y * end[4] + b.v.z * end[5];
         if (vn > 0) { b.v.x -= (1 + 0.15) * vn * end[3]; b.v.y -= (1 + 0.15) * vn * end[4]; b.v.z -= (1 + 0.15) * vn * end[5]; }
       }
@@ -763,6 +772,16 @@ function stepRailBall(b, m, dt) {
   b.v.y -= G * dt;
   b.p.addScaledVector(b.v, dt);
   railWallCollide(b, m, dt);
+  /* 兜底防丢球：滑道球若意外跌出管膛（双层端板之外的最后防线），重新放回下轨 */
+  if (b.p.y < 1.9) {
+    const a = LOWER_PTS[0], c = LOWER_PTS[2];
+    const ax = m.cx + a[0], ay = a[1], az = m.cz + a[2];
+    const dx = m.cx + c[0] - ax, dy = c[1] - ay, dz = m.cz + c[2] - az;
+    let t = ((b.p.x - ax) * dx + (b.p.y - ay) * dy + (b.p.z - az) * dz) / (dx * dx + dy * dy + dz * dz);
+    t = Math.max(0.03, Math.min(0.97, t));
+    b.p.set(ax + dx * t, ay + dy * t, az + dz * t);
+    b.v.set(0, 0, 0); b.settle = 0;
+  }
   if (!b.placed) {
     const sp = b.v.length();
     const inLow = b.p.y < LOWER_PTS[0][1] + 0.06 && Math.abs(b.p.x - m.cx) < 1.35;
@@ -852,11 +871,26 @@ function updateMachine(m, dt) {
     }
   } else if (m.phase === 'stir') {
     if (m.timer > 3) {
-      m.phase = 'draw'; m.timer = 0; m.holeOpen = true;
+      m.phase = 'draw'; m.timer = 0; m.stallT = 0; m.holeOpen = true;
       setPhase('出球口档杆开启 · 等待出球', true);
     }
   } else if (m.phase === 'draw') {
-    /* 纯物理出球：开阀后拨块持续搅拌，球堆自然流动到孔口即捕获，无任何兜底作弊 */
+    /* 纯物理出球：开阀后拨块持续搅拌，球堆自然流动到孔口即捕获。
+       稳定性兜底：开阀 12s 仍无球到孔口（极端堆叠）时来一记强抖动震松球堆
+       （等效真机的振动落料），保证出球必然推进 */
+    if (m.holeOpen) {
+      m.stallT = (m.stallT || 0) + dt;
+      if (m.stallT > 12) {
+        m.stallT = 0;
+        for (const b of m.balls) {
+          if (b.state === 'in' && !b.tube) {
+            b.v.y += 2.2 + Math.random() * 1.2;
+            b.v.x += (Math.random() - 0.5) * 1.6;
+            b.v.z += (Math.random() - 0.5) * 1.6;
+          }
+        }
+      }
+    }
     if (m.capturedBall && m.capturedBall.placed) {
       m.capturedBall = null;
       m.drawsLeft--;

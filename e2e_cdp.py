@@ -4,7 +4,7 @@ import json, time, base64, urllib.request
 import websocket
 
 CDP = "http://127.0.0.1:9333"
-URL = "http://127.0.0.1:8777/index.html"
+URL = "file:///E:/shuangseqiu-3d-sim/index.html"
 
 def http(path, method="GET"):
     req = urllib.request.Request(CDP + path, method=method)
