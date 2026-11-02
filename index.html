@@ -440,10 +440,10 @@ function buildMachine(cfg) {
     /* 顶部盖板（参考图）：扇形环板随管排弧度弯曲（圆心=球心，径向带包住管圈），
        每个管位开圆洞、管从洞中穿过 */
     {
-      const aH = (N - 1) / 2 * step + 0.20;          /* 板半张角（比管排两端各多出一段） */
+      const aH = (N - 1) / 2 * step + 0.09;          /* 板半张角（管排外只留窄边） */
       const cShape = new THREE.Shape();
-      cShape.absarc(0, 0, rt + 0.36, Math.PI / 2 - aH, Math.PI / 2 + aH, false);
-      cShape.absarc(0, 0, rt - 0.36, Math.PI / 2 + aH, Math.PI / 2 - aH, true);
+      cShape.absarc(0, 0, rt + 0.17, Math.PI / 2 - aH, Math.PI / 2 + aH, false);
+      cShape.absarc(0, 0, rt - 0.17, Math.PI / 2 + aH, Math.PI / 2 - aH, true);
       cShape.closePath();
       for (let i = 0; i < N; i++) {
         const a = (i - (N - 1) / 2) * step;
