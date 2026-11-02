@@ -4,46 +4,37 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const UPPER_PTS = [   /* 上层横轨：出球孔正下方（落球停顿） → 右端，微下坡向右 */
-  [0.00, 2.78, 0.70], [0.60, 2.76, 0.70], [1.18, 2.74, 0.70],
+const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端，微下坡向右；末端=洞 */
+  [0.00, 2.90, 0.70], [0.60, 2.88, 0.70], [1.18, 2.86, 0.70],
 ];
-const LOWER_PTS = [   /* 下层展示轨：右端接球 → 左行下坡 → 取球位 */
-  [1.20, 2.65, 0.70], [0.00, 2.62, 0.52], [-1.10, 2.57, 0.52],
+const LOWER_PTS = [   /* 下层滑道：右端接球口（上轨末端洞正下偏右） → 左行下坡 → 取球位 */
+  [1.45, 2.76, 0.70], [0.00, 2.72, 0.52], [-1.10, 2.69, 0.52],
+];
+const INTRO_PTS = [   /* 出球孔 → 上层滑道口的接引短槽 */
+  [0.00, 3.29, 0.68], [0.00, 2.90, 0.70],
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.84, discY:2.80, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:4.26, discY:3.22, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.84, discY:2.80, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:4.26, discY:3.22, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 
-/* ---------- 滑道折线：预计算分段弧长（两段式：上轨 + 下轨） ---------- */
-function buildRail(pts){
-  const segs=[]; let total=0;
-  for(let i=0;i<pts.length-1;i++){
-    const a=pts[i], b=pts[i+1];
-    const d=[b[0]-a[0], b[1]-a[1], b[2]-a[2]];
-    const len=Math.hypot(d[0],d[1],d[2]);
-    segs.push({a, d, len, t0:total, slope:d[1]/len, tan:d.map(v=>v/len)});
-    total+=len;
-  }
-  return {segs, total};
-}
-const RAIL_UP=buildRail(UPPER_PTS), RAIL_LOW=buildRail(LOWER_PTS);
-const UP_START=[0,2.78,0.70], UP_END=[1.18,2.74,0.70], LOW_START=[1.20,2.65,0.70];
-const PAUSE_T=0.45;   /* 出洞落后在上轨起点停顿（对照真机节奏） */
-function railAt(R,s){
-  const s2=Math.max(0,Math.min(R.total,s));
-  for(const g of R.segs){
-    if(s2<=g.t0+g.len||g===R.segs[R.segs.length-1]){
-      const t=(s2-g.t0)/g.len;
-      return { pos:[g.a[0]+g.d[0]*t, g.a[1]+g.d[1]*t, g.a[2]+g.d[2]*t], slope:g.slope, tan:g.tan };
-    }
-  }
-}
+/* ---------- 滑道（全 3D 刚性管道）：球保留完整自由度，管壁=胶囊体内壁约束 ----------
+   段格式 [a, b, openA, openB]：open 端=洞（球可自由进出，如上轨末端洞），
+   闭端=端板（球心停在板前一个球半径处）。 */
+const RAIL_SEGS = [
+  [INTRO_PTS[0], INTRO_PTS[1], false, true],      /* 出球孔接引短管（下端与上轨连通） */
+  [UPPER_PTS[0], UPPER_PTS[1], true, true],       /* 内部接口全部开敞（管道连续） */
+  [UPPER_PTS[1], UPPER_PTS[2], true, true],       /* 上轨末端 = 洞，球滚出后自由掉落 */
+  [LOWER_PTS[0], LOWER_PTS[1], false, true],      /* 下轨右端板：接住掉落球（兜底） */
+  [LOWER_PTS[1], LOWER_PTS[2], true, false],      /* 左端板 = 取球位挡块 */
+];
+const TUBE_IN = 0.035;                        /* 管壁限位（轴心距）= 管内半径 - 球半径 */
+const TUBE_BORE = R_BALL + 0.035;             /* 管膛半径（球心在膛内才参与管壁碰撞） */
 
 /* ---------- 预览架（与 index.html 同公式）：等长管环形排列插球壳后半部 ---------- */
 function buildRack(cfg){
@@ -152,7 +143,7 @@ function stepInBall(b,m,dt){
   if(m.holeOpen&&!m.captured&&d>1e-6){
     const nx=rx/d,ny=ry/d,nz=rz/d;
     if((nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit&&d>m.R-R_BALL*1.6){
-      b.state='rail'; b.placed=false; b.phase='drop1';
+      b.state='rail'; b.placed=false; b.settle=0; b.railT=0;
       b.p=[m.cx+m.exitDir[0]*m.R, m.cy+m.exitDir[1]*m.R, m.cz+m.exitDir[2]*m.R];
       b.v=[m.exitDir[0]*0.8, m.exitDir[1]*0.8, m.exitDir[2]*0.8];
       m.captured=b; m.holeOpen=false;
@@ -174,51 +165,86 @@ function stepInBall(b,m,dt){
   }
 }
 
-function rollOn(R,b,m,dt){
-  const q=railAt(R,b.s);
-  b.vs+=-G*q.slope*dt;
-  b.vs*=(1-0.55*dt);
-  b.s+=b.vs*dt;
-  if(b.s<0){ b.s=0; b.vs*=-0.25; }
-  const q2=railAt(R,b.s);
-  b.p[0]=m.cx+q2.pos[0]; b.p[1]=q2.pos[1]+R_BALL; b.p[2]=m.cz+q2.pos[2];
-  for(let k=0;k<3;k++) b.v[k]=q2.tan[k]*b.vs;
+/* 管壁碰撞（全 3D）：球心在管膛内才参与；侧壁=轴心距限位+反弹+滚动阻力；
+   闭式端=端板（球心停在板前 R_BALL），开式端=洞（自由穿过） */
+function railWallCollide(b,m,dt){
+  for(const [a,c,openA,openB] of RAIL_SEGS){
+    const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
+    const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;
+    const L=Math.hypot(dx,dy,dz), L2=L*L;
+    const ux=dx/L, uy=dy/L, uz=dz/L;
+    let t=((b.p[0]-ax)*dx+(b.p[1]-ay)*dy+(b.p[2]-az)*dz)/L2;
+    const rawT=t;
+    t=t<0?0:(t>1?1:t);
+    const px=ax+dx*t, py=ay+dy*t, pz=az+dz*t;
+    const rx=b.p[0]-px, ry=b.p[1]-py, rz=b.p[2]-pz;
+    const d=Math.hypot(rx,ry,rz);
+    const inBore=d<TUBE_BORE&&d>1e-6;
+    const touching=d>TUBE_IN-0.002;              /* 接触余量：贴面静置也算接触（否则振荡不衰减） */
+    if(inBore){
+      /* 侧壁约束：仅在本段中段（两端由端板/洞负责）；开口槽=法向朝上不约束（球可从上方落入） */
+      if(rawT>0&&rawT<1&&touching&&!(ry>0.35*d)){
+        if(d>TUBE_IN){
+          const nx=rx/d, ny=ry/d, nz=rz/d;
+          b.p[0]=px+nx*TUBE_IN; b.p[1]=py+ny*TUBE_IN; b.p[2]=pz+nz*TUBE_IN;
+          const vn=b.v[0]*nx+b.v[1]*ny+b.v[2]*nz;
+          if(vn>0){
+            const f=(1+0.05)*vn;                 /* 近非弹性法向接触 */
+            b.v[0]-=f*nx; b.v[1]-=f*ny; b.v[2]-=f*nz;
+          }
+        }
+        /* 滚动接触约束：接触时把速度分解为沿管切向（滚动方向）与环向（绕管打转），
+           环向快速衰减（球 rolling 时物理上不存在环向滑动），切向只留滚动阻力 */
+        const vd=b.v[0]*ux+b.v[1]*uy+b.v[2]*uz;
+        let cx2=b.v[0]-ux*vd, cy2=b.v[1]-uy*vd, cz2=b.v[2]-uz*vd;
+        const kC=1-0.25, kR=1-0.4*dt;            /* 环向衰减 / 滚动阻力（决定滚速上限） */
+        b.v[0]=ux*vd*kR+cx2*kC; b.v[1]=uy*vd*kR+cy2*kC; b.v[2]=uz*vd*kR+cz2*kC;
+      }
+      /* 端板：闭端=横跨管膛的实体挡墙（球心停在板前 R_BALL），开敞端=洞（自由穿过）。
+         只看球心到端面的有向距离，不看轴向投影（贴底滚动的球投影到不了端点） */
+      if(!openA){
+        const su=-ux, sv=-uy, sw=-uz;
+        const pen=(b.p[0]-ax)*su+(b.p[1]-ay)*sv+(b.p[2]-az)*sw;
+        if(pen>-R_BALL&&pen<0){
+          const corr=-R_BALL-pen;
+          b.p[0]+=su*corr; b.p[1]+=sv*corr; b.p[2]+=sw*corr;
+          const vn=b.v[0]*su+b.v[1]*sv+b.v[2]*sw;
+          if(vn>0){
+            const f=(1+0.15)*vn;
+            b.v[0]-=f*su; b.v[1]-=f*sv; b.v[2]-=f*sw;
+          }
+        }
+      }
+      if(!openB){
+        const su=ux, sv=uy, sw=uz;
+        const ex=ax+dx, ey=ay+dy, ez=az+dz;
+        const pen=(b.p[0]-ex)*su+(b.p[1]-ey)*sv+(b.p[2]-ez)*sw;
+        if(pen>-R_BALL&&pen<0){
+          const corr=-R_BALL-pen;
+          b.p[0]+=su*corr; b.p[1]+=sv*corr; b.p[2]+=sw*corr;
+          const vn=b.v[0]*su+b.v[1]*sv+b.v[2]*sw;
+          if(vn>0){
+            const f=(1+0.15)*vn;
+            b.v[0]-=f*su; b.v[1]-=f*sv; b.v[2]-=f*sw;
+          }
+        }
+      }
+    }
+  }
 }
 
-/* 两段式滑道：drop1 出孔自由下落 → pause 上轨起点停顿 → up 上轨右滚 → drop2 右端掉落 → low 下轨左滚+排队 */
+/* 滑道球：全 3D 弹道 + 管壁/挡块约束。出孔后停顿=落地碰撞自然耗散，无脚本计时；
+   入位=球在下轨自行停稳（显示事件，非物理干预） */
 function stepRailBall(b,m,dt){
   b.railT+=dt;
-  if(b.phase==='drop1'){
-    b.v[1]-=G*dt;
-    for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
-    if(b.p[1]<=UP_START[1]+R_BALL){
-      b.phase='pause'; b.pauseT=0; b.s=0;
-      b.p=[m.cx+UP_START[0], UP_START[1]+R_BALL, m.cz+UP_START[2]];
-      b.v=[0,0,0];
-    }
-  } else if(b.phase==='pause'){
-    b.pauseT+=dt;
-    if(b.pauseT>PAUSE_T){ b.phase='up'; b.s=0; b.vs=0.15; }
-  } else if(b.phase==='up'){
-    rollOn(RAIL_UP,b,m,dt);
-    if(b.s>=RAIL_UP.total){
-      b.phase='drop2';
-      b.p=[m.cx+UP_END[0], UP_END[1]+R_BALL, m.cz+UP_END[2]];
-      b.v=[0.2,Math.min(b.vs,0.5),0];
-    }
-  } else if(b.phase==='drop2'){
-    b.v[1]-=G*dt;
-    for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
-    if(b.p[1]<=LOW_START[1]+R_BALL){
-      b.phase='low'; b.s=0;
-      b.vs=Math.max(0.18,-b.v[0]*0.4);
-      b.p=[m.cx+LOW_START[0], LOW_START[1]+R_BALL, m.cz+LOW_START[2]];
-    }
-  } else {
-    rollOn(RAIL_LOW,b,m,dt);
-    if(b.s>RAIL_LOW.total){ b.s=RAIL_LOW.total; b.vs*=-0.25; }
-    /* 入位=在下轨排队区（左端）停稳；5s 超时保险。刚落轨慢速不算停稳 */
-    if(!b.placed&&((b.railT>1.5&&Math.abs(b.vs)<0.35&&b.s>RAIL_LOW.total-1.6)||b.railT>10)) b.placed=true;
+  b.v[1]-=G*dt;
+  for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
+  railWallCollide(b,m,dt);
+  if(!b.placed){
+    const sp=Math.hypot(b.v[0],b.v[1],b.v[2]);
+    const inLow=b.p[1]<LOWER_PTS[0][1]+0.06&&Math.abs(b.p[0]-m.cx)<1.35;
+    if(inLow&&sp<0.12) b.settle+=dt; else b.settle=0;
+    if(b.settle>0.35) b.placed=true;
   }
 }
 
@@ -233,21 +259,6 @@ function collideTubes(m){
     for(let i=0;i<arr.length-1;i++){
       const lo=arr[i],up=arr[i+1];
       if(up.sT<lo.sT+minD) up.sT=lo.sT+minD;
-    }
-  }
-}
-
-function collideRail(arr,total){
-  arr.sort((a,c)=>a.s-c.s);
-  const minD=R_BALL*2+0.02;
-  for(let i=0;i<arr.length-1;i++){
-    const a=arr[i],c=arr[i+1];
-    const d=c.s-a.s;
-    if(d<minD){
-      const push=(minD-d)/2;
-      a.s=Math.max(0,a.s-push);
-      c.s=Math.min(total,c.s+push);
-      if(a.vs>c.vs){ const t=a.vs; a.vs=c.vs; c.vs=t*0.5; }
     }
   }
 }
@@ -284,8 +295,7 @@ function runMachine(m, log){
     }
     collideGroup(m.balls.filter(b=>b.state==='in'&&!b.tube));
     collideTubes(m);
-    collideRail(m.balls.filter(b=>b.state==='rail'&&(b.phase==='up'||b.phase==='pause')),RAIL_UP.total);
-    collideRail(m.balls.filter(b=>b.state==='rail'&&b.phase==='low'),RAIL_LOW.total);
+    collideGroup(m.balls.filter(b=>b.state==='rail'));   /* 滑道球 3D 球球碰撞（管壁约束对齐成队） */
     // 旋转拨块：真实物理件，逐块碰撞把球实际拨动（混合的动力来源）
     if(m.agit>0.01){
       m.rotPhase[0]+=m.wInner*m.agit*DT; m.rotPhase[1]+=m.wOuter*m.agit*DT;
@@ -364,16 +374,16 @@ function runMachine(m, log){
   }
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }
   const done=m.balls.filter(b=>b.placed);
-  const ss=done.map(b=>+b.s.toFixed(2)).sort((a,b)=>a-b);
+  const ss=done.map(b=>+(b.p[0]-m.cx).toFixed(2)).sort((a,b)=>a-b);
   const gaps=[];
   for(let i=1;i<ss.length;i++) gaps.push(+(ss[i]-ss[i-1]).toFixed(3));
-  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  排队s=[${ss.join(',')}]
-     排成一行=${done.every(b=>b.s>RAIL_LOW.total-1.6)}  球间距=[${gaps.join(',')}]（应≈0.20）`);
+  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  排队x=[${ss.join(',')}]
+     排成一行=${done.every(b=>b.p[1]<LOWER_PTS[0][1]+0.06)}  球间距=[${gaps.join(',')}]（应≈0.178）`);
   return true;
 }
 
 console.log('=== 勿忘草真机比例仿真（完整球壳+环形预览架→双转子搅拌→底部小孔→滑道排队）===');
-console.log(`滑道总长 上轨${RAIL_UP.total.toFixed(2)} + 下轨${RAIL_LOW.total.toFixed(2)}`);
+console.log(`滑道（全3D管壁约束）段数=${RAIL_SEGS.length}`);
 let allOK=true;
 for(const cfg of CFG){
   for(let round=1;round<=3;round++){
