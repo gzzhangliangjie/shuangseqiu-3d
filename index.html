@@ -299,20 +299,21 @@ function buildMachine(cfg) {
   const cosExit = Math.cos(cfg.exitHalf);
   const sphBottom = cy - R;
 
-  /* ---- ④ 底座：深蓝直筒圆柱（对照 bing_10 全景：等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
-  const footRing = new THREE.Mesh(new THREE.CylinderGeometry(1.34, 1.38, 0.12, 48), blueDeep);
+  /* ---- ④ 底座：深蓝直筒圆柱（对照真机：底座是一小块，直径≈0.76 球径，
+          明显窄于球壳；等径圆柱、正面红色 LOGO、顶面透明亚克力底盘） ---- */
+  const footRing = new THREE.Mesh(new THREE.CylinderGeometry(0.94, 0.98, 0.12, 48), blueDeep);
   footRing.position.set(cx, 0.06, cz); scene.add(footRing);
-  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(1.27, 1.27, 2.44, 48), blueBase);
+  const baseBody = new THREE.Mesh(new THREE.CylinderGeometry(0.90, 0.90, 2.44, 48), blueBase);
   baseBody.position.set(cx, 0.12 + 1.22, cz); scene.add(baseBody);           /* 顶面 y=2.50，正好托住玻璃球底 */
-  const topTrim = new THREE.Mesh(new THREE.TorusGeometry(1.27, 0.045, 10, 64), blueDeep);
+  const topTrim = new THREE.Mesh(new THREE.TorusGeometry(0.90, 0.045, 10, 64), blueDeep);
   topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
-  const tray = new THREE.Mesh(new THREE.CylinderGeometry(1.34, 1.34, 0.06, 48), acrylicMat);
+  const tray = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.95, 0.06, 48), acrylicMat);
   tray.position.set(cx, 2.535, cz); tray.renderOrder = 5; scene.add(tray);   /* 透明亚克力底盘（底面2.505，避开底座顶面2.50共面） */
   /* 球壳-底座衔接（对照真机红框）：没有独立托座 —— 球壳自身下部收口成喇叭裙边，
      直接坐在底座顶面的透明亚克力盘上，滑道机构在收口裙边内部透出（见下方球壳构建） */
-  const logo = new THREE.Mesh(new THREE.CircleGeometry(0.40, 40),
+  const logo = new THREE.Mesh(new THREE.CircleGeometry(0.30, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
-  logo.position.set(cx, 1.25, cz + 1.273);
+  logo.position.set(cx, 1.25, cz + 0.903);
   logo.rotation.x = -0.02; scene.add(logo);
 
   /* ---- ② 球状搅拌室：旋转体轮廓 = 上部完整球面 + 下部收口裙边（对照真机：
