@@ -473,35 +473,53 @@ function ballColor(num, key) {
 
 /* 贴图：4 个白圆片 + 黑色号码（真机球为哑光磨砂质感） */
 function makeBallMesh(num, color) {
+  const s = String(num);                                 /* 转字符串：下方要用 includes 判定 6/9 */
   const cv = document.createElement('canvas'); cv.width = 512; cv.height = 256;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = color; ctx.fillRect(0, 0, 512, 256);
   const grad = ctx.createRadialGradient(160, 70, 20, 256, 128, 280);
   grad.addColorStop(0, 'rgba(255,255,255,.30)'); grad.addColorStop(1, 'rgba(0,0,0,.22)');
   ctx.fillStyle = grad; ctx.fillRect(0, 0, 512, 256);
-  /* 球面 10 个白圈数字：斐波那契球面布点（按球面积均匀分布）——
-     任意朝向都有数字正对视线，且间距处处相等；
-     近极区白圈横向加宽补偿 equirect 畸变（球面上看仍是等大正圆） */
-  const GA = Math.PI * (3 - Math.sqrt(5));
-  for (let k = 0; k < 10; k++) {
-    const lat = Math.asin(1 - 2 * (k + 0.5) / 10);        /* 纬度按球面积均匀 */
-    const lon = k * GA;                                    /* 经度黄金角交错 */
+  /* 球面 6 个白圈数字：上下两条纬带各 3 个、经度交错 60°，分布均匀且远离极点
+     （极点附近 equirect 畸变最严重 → 避开后文字不再被拉变形）。
+     每个白圈在画布上横向加宽 1/cos(lat) 补偿经度收敛，球面上仍是正圆；
+     数字本身按 1/cos(lat) 横向拉伸绘制，球面展开后比例还原、不变形。 */
+  const drawNumPatch = (lat, lon) => {
+    const cl = Math.max(Math.cos(lat), 0.6);
+    const ry = 46, rx = ry / cl;
     const py = (0.5 - lat / Math.PI) * 256;
-    const rx = 39 / Math.max(Math.cos(lat), 0.45), ry = 39;
     const px = ((lon / (Math.PI * 2)) % 1) * 512;
     for (const ox of [0, -512, 512]) {                     /* 横跨接缝补画 */
       const cx = px + ox;
       if (cx + rx < 0 || cx - rx > 512) continue;
-      const disc = ctx.createRadialGradient(cx - 10, py - 8, 4, cx, py, rx);
-      disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.8, '#f2f2f2'); disc.addColorStop(1, '#d8d8d8');
+      const disc = ctx.createRadialGradient(cx - 12, py - 10, 4, cx, py, rx);
+      disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.85, '#f4f4f4'); disc.addColorStop(1, '#dcdcdc');
       ctx.fillStyle = disc;
       ctx.beginPath(); ctx.ellipse(cx, py, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.stroke();
-      ctx.fillStyle = '#111';
-      ctx.font = 'bold 54px Arial';
+      ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.stroke();
+      ctx.save();
+      ctx.translate(cx, py);
+      ctx.scale(1 / cl, 1);                                /* 横向拉伸补偿经度收敛 → 球面不变形 */
+      ctx.fillStyle = '#151515';
+      ctx.font = 'bold 52px Arial';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(num, cx, py + 3);
+      ctx.fillText(s, 0, 4);
+      /* 6/9 区分：6 下方加横线、9 上方加横线（标准防旋转歧义记法） */
+      if (s.includes('6') || s.includes('9')) {
+        ctx.strokeStyle = '#151515'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        const bw = 30;
+        ctx.beginPath();
+        if (s.includes('6')) { ctx.moveTo(-bw, 32); ctx.lineTo(bw, 32); }   /* 6 → 下划线 */
+        else { ctx.moveTo(-bw, -32); ctx.lineTo(bw, -32); }                   /* 9 → 上划线 */
+        ctx.stroke();
+      }
+      ctx.restore();
     }
+  };
+  const LAT = 33 * Math.PI / 180;
+  for (let b = 0; b < 2; b++) {
+    const lat = b === 0 ? LAT : -LAT;
+    for (let k = 0; k < 3; k++) drawNumPatch(lat, (b * 60 + k * 120) * Math.PI / 180);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
