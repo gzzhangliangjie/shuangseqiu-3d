@@ -203,7 +203,7 @@ const MACH_CFG = [
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
-    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 4.5, wOuter: -2.8,
+    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -214,7 +214,7 @@ const MACH_CFG = [
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 9 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),
-    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 4.5, wOuter: -2.8,
+    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -349,8 +349,8 @@ function buildMachine(cfg) {
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
   for (let k = 0; k < 3; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 3 * Math.PI * 2 + 0.5;
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.035, 20, 12), acrylicMat);
-    dome.position.set(cfg.rHub * 0.6, 0.05, 0); dome.scale.y = 0.75; dome.renderOrder = 6;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.055, 20, 12), acrylicMat);
+    dome.position.set(cfg.rHub * 0.6, 0.055, 0); dome.scale.y = 0.8; dome.renderOrder = 6;
     hold.add(dome); inner.add(hold);
   }
   discSpins.push(inner);
@@ -367,8 +367,8 @@ function buildMachine(cfg) {
   ring.renderOrder = 6; outer.add(ring);
   for (let k = 0; k < 6; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.032, 20, 12), acrylicMat);
-    dome.position.set(cfg.gapInner + 0.035, 0.05, 0); dome.scale.y = 0.75; dome.renderOrder = 6;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.05, 20, 12), acrylicMat);
+    dome.position.set(cfg.gapInner + 0.05, 0.055, 0); dome.scale.y = 0.8; dome.renderOrder = 6;
     hold.add(dome); outer.add(hold);
   }
   discSpins.push(outer);

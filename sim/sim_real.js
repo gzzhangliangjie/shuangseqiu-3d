@@ -10,10 +10,10 @@ const RAIL_PTS = [
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:4.5, wOuter:-2.8,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:4.5, wOuter:-2.8,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
