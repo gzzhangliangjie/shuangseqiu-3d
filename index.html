@@ -636,17 +636,7 @@ function buildMachine(cfg) {
     }
     flushRail();
     /* 左端挡块 = 最后一段的闭端端板（上面已画），不再单独放一块外漂的板 */
-    /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
-    const postY0 = 0.62;
-    const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
-    for (const [px, py, pz] of [
-      [cx + UPPER_PTS[0][0], UPPER_PTS[0][1], cz + UPPER_PTS[0][2]],   /* 上层槽起点（避让落球洞） */
-      [cx + LOWER_PTS[1][0], LOWER_PTS[1][1], cz + LOWER_PTS[1][2]],   /* 下层槽中段 */
-      [stopX, stopY, stopZ],                                          /* 取球位端 */
-    ]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, py - RAIL_FLOOR - postY0, 10), acrylicMat);
-      post.position.set(px, (py - RAIL_FLOOR + postY0) / 2, pz); post.renderOrder = 7; scene.add(post);
-    }
+  /* 支撑柱已去掉（用户反馈三根竖杆突兀）：滑槽直接固定在透明柜身上，不再加竖杆 */
   }
 
   const glow = new THREE.PointLight(0xffffff, 0.38, R * 3.5);
