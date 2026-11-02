@@ -1,36 +1,56 @@
-/* 镜像 index.html（勿忘草 Myosotis 真机比例版）的物理逻辑
-   验证：预览架落球 → 双盘搅拌 → 出球口（开一颗关一颗）→ 出球口下透明短滑轨 → 轨端停稳入位
-   对照 .ref/bing_10 全景 + bing_3 出球特写：底座直筒圆柱、无横跨台面通道 */
-const R_BALL = 0.15, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
+/* 镜像 index.html（勿忘草 Myosotis 真机比例版 DESIGN.md）的物理逻辑
+   验证：预览管落球 → 双转子搅拌（内盘/外环带反向）→ 底部小孔出球（开一颗关一颗）
+        → 滑道（竖井→右行→右端下行→左行到取球位）→ 取球位停稳入位 */
+const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
-    inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
-    tubePitch:0.34, tubeRowN:7, tubeLoad:[5,5,5,3,5,5,5],
-    rail:{r1:0.94,y1:2.6,s1:0.167,phi1:0.6,r2:1.0,y2:2.5,s2:0.05,phiEnd:1.25}, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discY:2.66, rHub:0.31, rOuter:0.6, wInner:14, wOuter:-9,
-    inletHalf:60*Math.PI/180, exitHalf:10*Math.PI/180, exitDir:[0,-0.6,0.8],
-    tubePitch:0.34, tubeRowN:7, tubeLoad:[3,2,2,2,2,2,3],
-    rail:{r1:0.94,y1:2.6,s1:0.167,phi1:0.6,r2:1.0,y2:2.5,s2:0.05,phiEnd:1.25}, draws:1 },
+const RAIL_PTS = [
+  [0.00, 2.52, 0.40], [0.00, 2.46, 0.90], [0.92, 2.44, 0.90],
+  [1.12, 2.37, 0.60], [0.00, 2.31, 0.55], [-1.10, 2.27, 0.55],
 ];
 
-function railState(m,phi){
-  const P=m.rail;
-  if(phi<P.phi1) return {r:P.r1, y:P.y1-P.s1*phi};
-  return {r:P.r2, y:P.y2-P.s2*(phi-P.phi1)};
+const CFG = [
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.68, discY:2.66, rHub:0.40, gapInner:0.52, rOuter:1.02, wInner:14, wOuter:-9,
+    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.95,0.31],
+    holeUX:0.0, holeUZ:0.40, tubePitch:0.25, tubeRowN:7, tubeLoad:[5,5,5,3,5,5,5], tubeInset:0.25, draws:6 },
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.68, discY:2.66, rHub:0.40, gapInner:0.52, rOuter:1.02, wInner:14, wOuter:-9,
+    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.95,0.31],
+    holeUX:0.0, holeUZ:0.40, tubePitch:0.25, tubeRowN:7, tubeLoad:[3,2,2,2,2,2,3], tubeInset:0.25, draws:1 },
+];
+
+/* ---------- 滑道折线：预计算分段弧长，s → 位置/坡度/切向 ---------- */
+function buildRail(){
+  const segs=[]; let total=0;
+  for(let i=0;i<RAIL_PTS.length-1;i++){
+    const a=RAIL_PTS[i], b=RAIL_PTS[i+1];
+    const d=[b[0]-a[0], b[1]-a[1], b[2]-a[2]];
+    const len=Math.hypot(d[0],d[1],d[2]);
+    segs.push({a, d, len, t0:total, slope:d[1]/len, tan:d.map(v=>v/len)});
+    total+=len;
+  }
+  return {segs, total};
+}
+const RAIL = buildRail();
+function railAt(s){
+  const s2=Math.max(0,Math.min(RAIL.total,s));
+  for(const g of RAIL.segs){
+    if(s2<=g.t0+g.len||g===RAIL.segs[RAIL.segs.length-1]){
+      const t=(s2-g.t0)/g.len;
+      return { pos:[g.a[0]+g.d[0]*t, g.a[1]+g.d[1]*t, g.a[2]+g.d[2]*t], slope:g.slope, tan:g.tan };
+    }
+  }
 }
 
 function makeMachine(cfg){
-  // 预览架竖管内初始位（单排 7 管，与 index.html tubeDefs 一致）
+  // 预览架竖管内初始位（管底 = 开口平面下方 tubeInset，管插入球壳）
   const balls=[];
-  const y0=cfg.cy+cfg.R+0.07;
+  const y0=cfg.cy+cfg.R*Math.cos(cfg.inletHalf)-cfg.tubeInset;
   let num=0;
   for(let i=0;i<cfg.tubeRowN;i++){
     const x=cfg.cx+(i-(cfg.tubeRowN-1)/2)*cfg.tubePitch;
     for(let k=0;k<cfg.tubeLoad[i];k++){
       if(++num>cfg.count) break;
       balls.push({num, p:[x, y0+R_BALL+0.02+k*(R_BALL*2+0.02), cfg.cz],
-                  v:[0,0,0], state:'in', placed:false, railT:0});
+                  v:[0,0,0], state:'in', placed:false, railT:0, s:0, vs:0});
     }
   }
   return {...cfg, balls, agit:1, loadOpen:false, holeOpen:false, captured:null,
@@ -42,10 +62,10 @@ function stepInBall(b,m,dt){
   const v=b.v,p=b.p;
   v[1]-=G*dt;
   if(m.agit>0.01){
-    // 同轴双转子（专利 US6145836）：中心盘/外环盘反向不同速
+    // 同轴双转子（专利 US6145836）：内盘/外环带反向不同速，以刻缝中点分界
     const dx=p[0]-m.cx, dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
     if(Math.abs(p[1]-m.discY)<0.55){
-      const w=rr<m.rHub?m.wInner:(rr<m.rOuter?m.wOuter:0);
+      const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter?m.wOuter:0);
       if(w!==0){
         const sp=w*m.agit*Math.min(rr,m.rOuter)*1.3;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
@@ -62,9 +82,10 @@ function stepInBall(b,m,dt){
   for(let i=0;i<3;i++) v[i]*=Math.max(0,1-damp*dt);
   for(let i=0;i<3;i++) p[i]+=v[i]*dt;
 
-  // 转子顶面支撑：球坐在双转子上
+  // 转子顶面支撑：球坐在双转子上；出球孔正上方留缺口，球滚到那里就掉进孔
   const floorC=m.discY+0.05+R_BALL;
-  if(p[1]<floorC){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
+  const holeD=Math.hypot(p[0]-m.cx-m.holeUX, p[2]-m.cz-m.holeUZ);
+  if(p[1]<floorC&&holeD>0.15){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
 
   // 落球收拢：仅对落到开口边缘外侧的球施加向心力（与 index.html 一致）
   if(m.loadOpen && p[1]>m.cy+0.4){
@@ -81,7 +102,7 @@ function stepInBall(b,m,dt){
     const inInlet=m.loadOpen&&ny>m.cosInlet;
     const inExit=m.holeOpen&&(nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit;
     if(inExit&&d>m.R+R_BALL*0.7&&!m.captured){
-      b.state='rail'; b.placed=false; b.phi=0; b.w=1.4; m.captured=b; m.holeOpen=false;
+      b.state='rail'; b.placed=false; b.s=0; b.vs=2.0; m.captured=b; m.holeOpen=false;
       for(const ob of m.balls) if(ob!==b&&ob.placed&&ob.state==='rail') ob.state='done';
       return;
     }
@@ -97,36 +118,31 @@ function stepInBall(b,m,dt){
 }
 
 function stepRailBall(b,m,dt){
-  const P=m.rail,p=b.p,v=b.v;
   b.railT+=dt;
-  const st=railState(m,b.phi);
-  const slope=b.phi<P.phi1?P.s1:P.s2;
-  b.w+=G*slope/(st.r*st.r)*dt;
-  b.w*=(1-0.8*dt);
-  b.phi+=b.w*dt;
-  if(b.phi<0){ b.phi=0; b.w*=-0.25; }
-  if(b.phi>P.phiEnd){ b.phi=P.phiEnd; b.w*=-0.25; }
-  const st2=railState(m,b.phi);
-  p[0]=m.cx-Math.sin(b.phi)*st2.r;
-  p[2]=m.cz+Math.cos(b.phi)*st2.r;
-  p[1]=st2.y+R_BALL;
-  const vt=b.w*st2.r;
-  v[0]=-Math.cos(b.phi)*vt; v[1]=0; v[2]=-Math.sin(b.phi)*vt;
-  if(!b.placed&&((b.railT>1.5&&Math.abs(b.w)<0.35)||b.railT>5)) b.placed=true;
+  const q=railAt(b.s);
+  b.vs+=-G*q.slope*dt;
+  b.vs*=(1-0.55*dt);
+  b.s+=b.vs*dt;
+  if(b.s<0){ b.s=0; b.vs*=-0.25; }
+  if(b.s>RAIL.total){ b.s=RAIL.total; b.vs*=-0.25; }
+  const q2=railAt(b.s);
+  p_set(b.p, m.cx+q2.pos[0], q2.pos[1]+R_BALL, m.cz+q2.pos[2]);
+  for(let k=0;k<3;k++) b.v[k]=q2.tan[k]*b.vs;
+  if(!b.placed&&((b.railT>1.5&&Math.abs(b.vs)<0.35)||b.railT>5)) b.placed=true;
 }
+function p_set(p,x,y,z){ p[0]=x; p[1]=y; p[2]=z; }
 
 function collideRail(arr,m){
-  const P=m.rail;
-  arr.sort((a,c)=>a.phi-c.phi);
-  const minD=(R_BALL*2+0.02)/((P.r1+P.r2)/2);
+  arr.sort((a,c)=>a.s-c.s);
+  const minD=R_BALL*2+0.02;
   for(let i=0;i<arr.length-1;i++){
     const a=arr[i],c=arr[i+1];
-    const d=c.phi-a.phi;
+    const d=c.s-a.s;
     if(d<minD){
       const push=(minD-d)/2;
-      a.phi=Math.max(0,a.phi-push);
-      c.phi=Math.min(P.phiEnd,c.phi+push);
-      if(a.w>c.w){ const t=a.w; a.w=c.w; c.w=t*0.5; }
+      a.s=Math.max(0,a.s-push);
+      c.s=Math.min(RAIL.total,c.s+push);
+      if(a.vs>c.vs){ const t=a.vs; a.vs=c.vs; c.vs=t*0.5; }
     }
   }
 }
@@ -149,13 +165,12 @@ function collideGroup(arr){
 
 function runMachine(m, log){
   let t=0, placedCount=0, stirT=0, holePhase=false;
-  // 初始：先模拟落球（loadOpen 2.5s）
   m.loadOpen=true; let loadT=0;
-  while(t<120){
+  while(t<150){
     t+=DT;
     if(m.loadOpen){
       loadT+=DT;
-      if(loadT>2.5||m.balls.every(b=>b.p[1]<m.cy-0.1)){ m.loadOpen=false; }
+      if(loadT>2.5||m.balls.every(b=>b.p[1]<m.cy+m.R*0.45)){ m.loadOpen=false; }
     } else if(!m.captured){
       if(!holePhase){ stirT+=DT; if(stirT>3){ m.holeOpen=true; holePhase=true; stirT=0; } }
       else { stirT+=DT; if(stirT>3.5){ stirT=1.0; // 防堵：定期给最近球冲量 + 全场抖动（模拟真机持续搅拌防拱）
@@ -170,7 +185,6 @@ function runMachine(m, log){
     } else if(m.captured&&m.captured.placed){
       m.captured=null; placedCount++; holePhase=false; stirT=0;
     }
-    const inB=[],railB=[];
     for(const b of m.balls){
       if(b.state==='in') stepInBall(b,m,DT);
       else if(b.state==='rail') stepRailBall(b,m,DT);
@@ -181,13 +195,14 @@ function runMachine(m, log){
   }
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }
   const done=m.balls.filter(b=>b.placed);
-  const phis=done.map(b=>+b.phi.toFixed(2));
-  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  取球位phi=[${phis.join(',')}]
-     全部到达/经过取球管=${done.every(b=>b.phi>0.3)}`);
+  const ss=done.map(b=>+b.s.toFixed(2));
+  log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  取球位s=[${ss.join(',')}]
+     全部到达取球端=${done.every(b=>b.s>RAIL.total*0.8)}`);
   return true;
 }
 
-console.log('=== 勿忘草真机比例仿真（落球→搅拌→出球→短滑轨轨端停稳）===');
+console.log('=== 勿忘草真机比例仿真（落球→双转子搅拌→底部小孔→滑道→取球位）===');
+console.log(`滑道总长 ${RAIL.total.toFixed(2)}，取球位在 s=${RAIL.total.toFixed(2)}`);
 let allOK=true;
 for(const cfg of CFG){
   for(let round=1;round<=3;round++){
