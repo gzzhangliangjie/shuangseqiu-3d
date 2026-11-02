@@ -126,9 +126,9 @@ controls.maxPolarAngle = Math.PI * 0.52;
 controls.minDistance = 6;
 controls.maxDistance = 36;
 
-scene.add(new THREE.HemisphereLight(0x9db0ff, 0x1a2038, 0.9));
-const dir1 = new THREE.DirectionalLight(0xffffff, 1.35); dir1.position.set(7, 14, 9); scene.add(dir1);
-const dir2 = new THREE.DirectionalLight(0x7f9dff, 0.5); dir2.position.set(-9, 7, -7); scene.add(dir2);
+scene.add(new THREE.HemisphereLight(0x9db0ff, 0x1a2038, 0.55));
+const dir1 = new THREE.DirectionalLight(0xffffff, 0.85); dir1.position.set(7, 14, 9); scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0x7f9dff, 0.32); dir2.position.set(-9, 7, -7); scene.add(dir2);
 
 /* 展台 */
 const plat = new THREE.Mesh(
@@ -481,7 +481,7 @@ function buildMachine(cfg) {
     stopper.position.set(end.x, end.y + R_BALL + 0.04, end.z); stopper.renderOrder = 7; scene.add(stopper);
   }
 
-  const glow = new THREE.PointLight(0xffffff, 0.6, R * 3.5);
+  const glow = new THREE.PointLight(0xffffff, 0.38, R * 3.5);
   glow.position.set(cx, cy, cz); scene.add(glow);
 
   /* ---- 球：初始停在预览架竖管内（管内可叠多颗） ---- */
