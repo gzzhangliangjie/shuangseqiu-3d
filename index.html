@@ -221,7 +221,7 @@ const RAIL_WALLTOP = -0.045;
 const RAIL_SEGS = [
   [UPPER_PTS[0], UPPER_PTS[1], false, true],    /* 第一层滑槽：左端封板，右端开 = 落球洞口 */
   [HOLE_PTS[0], HOLE_PTS[1], true, true],       /* 层间落球洞（竖直圆孔，两端通透） */
-  [LOWER_PTS[0], LOWER_PTS[1], true, true],     /* 第二层右段：右端开敞（球从落球洞垂直下来，不需要挡板） */
+  [LOWER_PTS[0], LOWER_PTS[1], false, true],   /* 第二层右段：右端挡墙（接球口后墙，接住从洞落下的球） */
   [LOWER_PTS[1], LOWER_PTS[2], true, false],    /* 左端端板 = 取球位挡块 */
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
@@ -584,6 +584,21 @@ function buildMachine(cfg) {
       mesh.quaternion.setFromRotationMatrix(
         new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(rail.up, rail.dir), rail.up, rail.dir));
       mesh.renderOrder = 7; scene.add(mesh);
+      /* 闭端挡墙：物理端板是整圆盘（能挡住整颗球），槽体闭端帽却只有低侧壁高
+         （球心在帽顶上方）——「看得见球停住、看不见挡的结构」就是这里。
+         闭端外侧面贴一块与槽体同宽的挡墙，从槽底一直到轴线上方 4cm（过球心），
+         与端面齐平贴合，物理=视觉。 */
+      const hG = -0.03, y0 = -RAIL_FLOOR - 0.025; /* 顶边=球心高度：盖过球心即可；宽度收到两侧壁之间，不撑大槽体外廓 */
+      const side = new THREE.Vector3().crossVectors(rail.up, rail.dir);
+      const basis = new THREE.Matrix4().makeBasis(side, rail.up, rail.dir);
+      for (const [closed, P, sgn] of [[rail.capA, rail.A, -1], [rail.capB, rail.end, 1]]) {
+        if (!closed) continue;
+        const g = new THREE.Mesh(new THREE.BoxGeometry(2 * (W2 - T), hG - y0, T * 0.75), railMat);
+        g.position.copy(P).addScaledVector(rail.up, (hG + y0) / 2)
+          .addScaledVector(rail.dir, sgn * (T / 2 + 0.001));
+        g.quaternion.setFromRotationMatrix(basis);
+        g.renderOrder = 7; scene.add(g);
+      }
       rail = null;
     }
     for (const [a, c, openA, openB] of RAIL_SEGS) {
@@ -922,8 +937,11 @@ function railWallCollide(b, m, dt) {
       if (!end) continue;
       const pen = (b.p.x - end[0]) * end[3] + (b.p.y - end[1]) * end[4] + (b.p.z - end[2]) * end[5];
       const distEnd = Math.hypot(b.p.x - end[0], b.p.y - end[1], b.p.z - end[2]);
-      const inside = pen > -R_BALL && pen < 0 && distEnd < RAIL_R + 0.02;
-      const outside = pen >= 0 && pen < R_BALL + 0.06 && distEnd < 0.35;
+      /* 只在槽内高度挡（rely<0 = 可见挡墙顶）：球从上方落进接球口时径直穿过，
+         不被端板捕捉区搬运/耗速；落进槽里之后端板才是一堵真墙 */
+      const atSlot = rely < -0.03;
+      const inside = atSlot && pen > -R_BALL && pen < 0 && distEnd < RAIL_R + 0.02;
+      const outside = atSlot && pen >= 0 && pen < R_BALL + 0.06 && distEnd < 0.35;
       if (inside || outside) {
         if (outside) {   /* 从外面撞板：放回板内侧一个球半径处 */
           b.p.x = end[0] - end[3] * R_BALL; b.p.y = end[1] - end[4] * R_BALL; b.p.z = end[2] - end[5] * R_BALL;

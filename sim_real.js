@@ -29,7 +29,7 @@ const CFG = [
 const RAIL_SEGS = [
   [UPPER_PTS[0], UPPER_PTS[1], false, true],      /* 第一层滑槽：左端封板，右端开 = 落球洞口 */
   [HOLE_PTS[0], HOLE_PTS[1], true, true],         /* 层间落球洞（竖直圆孔） */
-  [LOWER_PTS[0], LOWER_PTS[1], true, true],       /* 第二层右段：右端开敞（球从落球洞垂直下来） */
+  [LOWER_PTS[0], LOWER_PTS[1], false, true],   /* 第二层右段：右端挡墙（接球口后墙，接住从洞落下的球） */
   [LOWER_PTS[1], LOWER_PTS[2], true, false],      /* 左端板 = 取球位挡块 */
 ];
 const RAIL_WALL_GAP = 0.035;                  /* 球面到槽壁余隙 = 球心离轴约束量（与 index.html 同值） */
@@ -265,8 +265,10 @@ function railWallCollide(b,m,dt){
         const su=-ux, sv=-uy, sw=-uz;
         const pen=(b.p[0]-ax)*su+(b.p[1]-ay)*sv+(b.p[2]-az)*sw;
         const distEnd=Math.hypot(b.p[0]-ax, b.p[1]-ay, b.p[2]-az);
-        const inside=pen>-R_BALL&&pen<0&&distEnd<TUBE_BORE+0.02;
-        const outside=pen>=0&&pen<R_BALL+0.06&&distEnd<0.35;
+        /* 只在槽内高度挡(rely<0.04=可见挡墙顶)：上方落下的球径直穿过接球口不被搬运耗速 */
+        const atSlot=(typeof rely==='number'?rely:1)<-0.03;
+        const inside=atSlot&&pen>-R_BALL&&pen<0&&distEnd<TUBE_BORE+0.02;
+        const outside=atSlot&&pen>=0&&pen<R_BALL+0.06&&distEnd<0.35;
         if(inside||outside){
           if(outside){ b.p[0]=ax-su*R_BALL; b.p[1]=ay-sv*R_BALL; b.p[2]=az-sw*R_BALL; }
           else { const corr=-R_BALL-pen; b.p[0]+=su*corr; b.p[1]+=sv*corr; b.p[2]+=sw*corr; }
