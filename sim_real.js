@@ -241,18 +241,27 @@ function railWallCollide(b,m,dt){
 
 /* 滑道球：全 3D 弹道 + 管壁/挡块约束。出孔后停顿=落地碰撞自然耗散，无脚本计时；
    入位=球在下轨自行停稳（显示事件，非物理干预） */
-/* 真机限位装置：出球口前缘挡墙 —— 球出孔前冲撞停，再沿斜槽滚下 */
+/* 真机限位装置，两面挡墙：① 出球口前缘 ② 第一级轨道末端（面开洞，球撞停后垂直漏到第二级） */
+function stopWalls(m){
+  return [
+    { sx:m.cx+UPPER_PTS[0][0], sy:UPPER_PTS[0][1]-0.05, sz:m.cz+UPPER_PTS[0][2]+0.14,
+      nx:0, ny:0.18, nz:-0.984, tw:'x', span:0.30 },
+    { sx:m.cx+UPPER_PTS[1][0]+0.12, sy:UPPER_PTS[1][1]-0.02, sz:m.cz+UPPER_PTS[1][2],
+      nx:-0.984, ny:0.178, nz:0, tw:'z', span:0.20 },
+  ];
+}
 function railStopLip(b,m){
-  const sx=m.cx+UPPER_PTS[0][0], sy=UPPER_PTS[0][1]-0.05, sz=m.cz+UPPER_PTS[0][2]+0.14;
-  const nx=0, ny=0.18, nz=-0.984;
-  const pen=(b.p[0]-sx)*nx+(b.p[1]-sy)*ny+(b.p[2]-sz)*nz;
-  if(pen>-R_BALL&&pen<0.02&&Math.abs(b.p[0]-sx)<0.30){
-    const corr=-R_BALL-pen;
-    b.p[0]+=nx*corr; b.p[1]+=ny*corr; b.p[2]+=nz*corr;
-    const vn=b.v[0]*nx+b.v[1]*ny+b.v[2]*nz;
-    if(vn>0){
-      b.v[0]-=1.15*vn*nx; b.v[1]-=1.15*vn*ny; b.v[2]-=1.15*vn*nz;
-      b.v[0]*=0.6; b.v[1]*=0.6; b.v[2]*=0.6;
+  for(const w of stopWalls(m)){
+    const pen=(b.p[0]-w.sx)*w.nx+(b.p[1]-w.sy)*w.ny+(b.p[2]-w.sz)*w.nz;
+    const tang=w.tw==='x'?Math.abs(b.p[0]-w.sx):Math.abs(b.p[2]-w.sz);
+    if(pen<R_BALL&&pen>-0.05&&tang<w.span){
+      const corr=R_BALL-pen;
+      b.p[0]+=w.nx*corr; b.p[1]+=w.ny*corr; b.p[2]+=w.nz*corr;
+      const vn=b.v[0]*w.nx+b.v[1]*w.ny+b.v[2]*w.nz;
+      if(vn<0){
+        b.v[0]-=1.15*vn*w.nx; b.v[1]-=1.15*vn*w.ny; b.v[2]-=1.15*vn*w.nz;
+        b.v[0]*=0.6; b.v[1]*=0.6; b.v[2]*=0.6;
+      }
     }
   }
 }
@@ -262,15 +271,14 @@ function stepRailBall(b,m,dt){
   for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
   railWallCollide(b,m,dt);
   railStopLip(b,m);
-  /* 兜底防丢球：滑道球若意外跌出管膛（双层端板之外的最后防线），重新放回下轨 */
-  if(b.p[1]<1.9){
-    const a=LOWER_PTS[0], c=LOWER_PTS[2];
+  /* 兜底防丢球：滑道球若意外跌出管膛/搁浅轨外，重置回下轨右段空白区（避开取球位队列） */
+  if(b.p[1]<1.9 || (!b.placed&&b.railT>12)){
+    const a=LOWER_PTS[0], c=LOWER_PTS[1];
     const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
     const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;
-    let t=((b.p[0]-ax)*dx+(b.p[1]-ay)*dy+(b.p[2]-az)*dz)/(dx*dx+dy*dy+dz*dz);
-    t=Math.max(0.03,Math.min(0.97,t));
+    const t=0.36;
     b.p[0]=ax+dx*t; b.p[1]=ay+dy*t; b.p[2]=az+dz*t;
-    b.v[0]=0; b.v[1]=0; b.v[2]=0; b.settle=0;
+    b.v[0]=0; b.v[1]=0; b.v[2]=0; b.settle=0; b.railT=0;
   }
   if(!b.placed){
     const sp=Math.hypot(b.v[0],b.v[1],b.v[2]);

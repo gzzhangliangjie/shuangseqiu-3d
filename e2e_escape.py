@@ -16,6 +16,7 @@ def http(path, method="GET"):
 def one_round(idx):
     tab = http("/json/new?" + URL.replace(":", "%3A").replace("/", "%2F"), "PUT")
     ws = websocket.create_connection(tab["webSocketDebuggerUrl"], timeout=200)
+    tab_id = tab["id"]
     _id = [0]
     def send(method, params=None):
         _id[0] += 1
@@ -29,7 +30,10 @@ def one_round(idx):
         return r.get("result", {}).get("value")
     send("Runtime.enable")
     send("Runtime.evaluate", {"expression": "location.href='" + URL + "'"})
-    time.sleep(4)
+    for _ in range(60):                     # 等机器建好再点开始，避免整轮空转
+        ready = send(3, "window.machines && machines.length === 2")
+        if ready: break
+        time.sleep(1)
     send("Runtime.evaluate", {"expression": "document.getElementById('startBtn').click()"})
     t0 = time.time()
     escaped = []
@@ -51,6 +55,8 @@ def one_round(idx):
         time.sleep(1.0)
     print(f"R{idx}: filled={filled} 逃逸={len(escaped)} 耗时{time.time()-t0:.0f}s")
     ws.close()
+    try: http("/json/close/" + tab_id)      # 关闭本标签，防止多轮 WebGL 实例堆积拖慢模拟
+    except Exception: pass
     return filled, escaped
 
 ok = True
