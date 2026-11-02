@@ -4,9 +4,11 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const RAIL_PTS = [
-  [0.00, 2.86, 0.70], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
-  [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
+const UPPER_PTS = [   /* 上层横轨：出球孔正下方（落球停顿） → 右端，微下坡向右 */
+  [0.00, 2.78, 0.70], [0.60, 2.76, 0.70], [1.18, 2.74, 0.70],
+];
+const LOWER_PTS = [   /* 下层展示轨：右端接球 → 左行下坡 → 取球位 */
+  [1.20, 2.65, 0.70], [0.00, 2.62, 0.52], [-1.10, 2.57, 0.52],
 ];
 
 const CFG = [
@@ -18,11 +20,11 @@ const CFG = [
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 
-/* ---------- 滑道折线：预计算分段弧长 ---------- */
-function buildRail(){
+/* ---------- 滑道折线：预计算分段弧长（两段式：上轨 + 下轨） ---------- */
+function buildRail(pts){
   const segs=[]; let total=0;
-  for(let i=0;i<RAIL_PTS.length-1;i++){
-    const a=RAIL_PTS[i], b=RAIL_PTS[i+1];
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i], b=pts[i+1];
     const d=[b[0]-a[0], b[1]-a[1], b[2]-a[2]];
     const len=Math.hypot(d[0],d[1],d[2]);
     segs.push({a, d, len, t0:total, slope:d[1]/len, tan:d.map(v=>v/len)});
@@ -30,11 +32,13 @@ function buildRail(){
   }
   return {segs, total};
 }
-const RAIL = buildRail();
-function railAt(s){
-  const s2=Math.max(0,Math.min(RAIL.total,s));
-  for(const g of RAIL.segs){
-    if(s2<=g.t0+g.len||g===RAIL.segs[RAIL.segs.length-1]){
+const RAIL_UP=buildRail(UPPER_PTS), RAIL_LOW=buildRail(LOWER_PTS);
+const UP_START=[0,2.78,0.70], UP_END=[1.18,2.74,0.70], LOW_START=[1.20,2.65,0.70];
+const PAUSE_T=0.45;   /* 出洞落后在上轨起点停顿（对照真机节奏） */
+function railAt(R,s){
+  const s2=Math.max(0,Math.min(R.total,s));
+  for(const g of R.segs){
+    if(s2<=g.t0+g.len||g===R.segs[R.segs.length-1]){
       const t=(s2-g.t0)/g.len;
       return { pos:[g.a[0]+g.d[0]*t, g.a[1]+g.d[1]*t, g.a[2]+g.d[2]*t], slope:g.slope, tan:g.tan };
     }
@@ -148,7 +152,10 @@ function stepInBall(b,m,dt){
   if(m.holeOpen&&!m.captured&&d>1e-6){
     const nx=rx/d,ny=ry/d,nz=rz/d;
     if((nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit&&d>m.R-R_BALL*1.6){
-      b.state='rail'; b.placed=false; b.s=0; b.vs=2.0; m.captured=b; m.holeOpen=false;
+      b.state='rail'; b.placed=false; b.phase='drop1';
+      b.p=[m.cx+m.exitDir[0]*m.R, m.cy+m.exitDir[1]*m.R, m.cz+m.exitDir[2]*m.R];
+      b.v=[m.exitDir[0]*0.8, m.exitDir[1]*0.8, m.exitDir[2]*0.8];
+      m.captured=b; m.holeOpen=false;
       return;
     }
   }
@@ -167,18 +174,52 @@ function stepInBall(b,m,dt){
   }
 }
 
-function stepRailBall(b,m,dt){
-  b.railT+=dt;
-  const q=railAt(b.s);
+function rollOn(R,b,m,dt){
+  const q=railAt(R,b.s);
   b.vs+=-G*q.slope*dt;
   b.vs*=(1-0.55*dt);
   b.s+=b.vs*dt;
   if(b.s<0){ b.s=0; b.vs*=-0.25; }
-  if(b.s>RAIL.total){ b.s=RAIL.total; b.vs*=-0.25; }
-  const q2=railAt(b.s);
+  const q2=railAt(R,b.s);
   b.p[0]=m.cx+q2.pos[0]; b.p[1]=q2.pos[1]+R_BALL; b.p[2]=m.cz+q2.pos[2];
   for(let k=0;k<3;k++) b.v[k]=q2.tan[k]*b.vs;
-  if(!b.placed&&((b.railT>1.5&&Math.abs(b.vs)<0.35)||b.railT>5)) b.placed=true;
+}
+
+/* 两段式滑道：drop1 出孔自由下落 → pause 上轨起点停顿 → up 上轨右滚 → drop2 右端掉落 → low 下轨左滚+排队 */
+function stepRailBall(b,m,dt){
+  b.railT+=dt;
+  if(b.phase==='drop1'){
+    b.v[1]-=G*dt;
+    for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
+    if(b.p[1]<=UP_START[1]+R_BALL){
+      b.phase='pause'; b.pauseT=0; b.s=0;
+      b.p=[m.cx+UP_START[0], UP_START[1]+R_BALL, m.cz+UP_START[2]];
+      b.v=[0,0,0];
+    }
+  } else if(b.phase==='pause'){
+    b.pauseT+=dt;
+    if(b.pauseT>PAUSE_T){ b.phase='up'; b.s=0; b.vs=0.15; }
+  } else if(b.phase==='up'){
+    rollOn(RAIL_UP,b,m,dt);
+    if(b.s>=RAIL_UP.total){
+      b.phase='drop2';
+      b.p=[m.cx+UP_END[0], UP_END[1]+R_BALL, m.cz+UP_END[2]];
+      b.v=[0.2,Math.min(b.vs,0.5),0];
+    }
+  } else if(b.phase==='drop2'){
+    b.v[1]-=G*dt;
+    for(let k=0;k<3;k++) b.p[k]+=b.v[k]*dt;
+    if(b.p[1]<=LOW_START[1]+R_BALL){
+      b.phase='low'; b.s=0;
+      b.vs=Math.max(0.18,-b.v[0]*0.4);
+      b.p=[m.cx+LOW_START[0], LOW_START[1]+R_BALL, m.cz+LOW_START[2]];
+    }
+  } else {
+    rollOn(RAIL_LOW,b,m,dt);
+    if(b.s>RAIL_LOW.total){ b.s=RAIL_LOW.total; b.vs*=-0.25; }
+    /* 入位=在下轨排队区（左端）停稳；5s 超时保险。刚落轨慢速不算停稳 */
+    if(!b.placed&&((b.railT>1.5&&Math.abs(b.vs)<0.35&&b.s>RAIL_LOW.total-1.6)||b.railT>10)) b.placed=true;
+  }
 }
 
 function collideTubes(m){
@@ -196,7 +237,7 @@ function collideTubes(m){
   }
 }
 
-function collideRail(arr,m){
+function collideRail(arr,total){
   arr.sort((a,c)=>a.s-c.s);
   const minD=R_BALL*2+0.02;
   for(let i=0;i<arr.length-1;i++){
@@ -205,7 +246,7 @@ function collideRail(arr,m){
     if(d<minD){
       const push=(minD-d)/2;
       a.s=Math.max(0,a.s-push);
-      c.s=Math.min(RAIL.total,c.s+push);
+      c.s=Math.min(total,c.s+push);
       if(a.vs>c.vs){ const t=a.vs; a.vs=c.vs; c.vs=t*0.5; }
     }
   }
@@ -243,7 +284,8 @@ function runMachine(m, log){
     }
     collideGroup(m.balls.filter(b=>b.state==='in'&&!b.tube));
     collideTubes(m);
-    collideRail(m.balls.filter(b=>b.state==='rail'),m);
+    collideRail(m.balls.filter(b=>b.state==='rail'&&(b.phase==='up'||b.phase==='pause')),RAIL_UP.total);
+    collideRail(m.balls.filter(b=>b.state==='rail'&&b.phase==='low'),RAIL_LOW.total);
     // 旋转拨块：真实物理件，逐块碰撞把球实际拨动（混合的动力来源）
     if(m.agit>0.01){
       m.rotPhase[0]+=m.wInner*m.agit*DT; m.rotPhase[1]+=m.wOuter*m.agit*DT;
@@ -326,12 +368,12 @@ function runMachine(m, log){
   const gaps=[];
   for(let i=1;i<ss.length;i++) gaps.push(+(ss[i]-ss[i-1]).toFixed(3));
   log(`${m.key}: OK ${placedCount}/${m.draws} 出球耗时 ${t.toFixed(1)}s  排队s=[${ss.join(',')}]
-     排成一行=${done.every(b=>b.s>RAIL.total-1.6)}  球间距=[${gaps.join(',')}]（应≈0.20）`);
+     排成一行=${done.every(b=>b.s>RAIL_LOW.total-1.6)}  球间距=[${gaps.join(',')}]（应≈0.20）`);
   return true;
 }
 
 console.log('=== 勿忘草真机比例仿真（完整球壳+环形预览架→双转子搅拌→底部小孔→滑道排队）===');
-console.log(`滑道总长 ${RAIL.total.toFixed(2)}`);
+console.log(`滑道总长 上轨${RAIL_UP.total.toFixed(2)} + 下轨${RAIL_LOW.total.toFixed(2)}`);
 let allOK=true;
 for(const cfg of CFG){
   for(let round=1;round<=3;round++){

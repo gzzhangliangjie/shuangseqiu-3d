@@ -185,9 +185,11 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    整个台座上的装置（球壳/预览管/搅拌盘/出球机构/滑道）= 全透明有机玻璃，无彩色件。
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
-const RAIL_PTS = [   /* 相对机器中心 (cx,cz)：出球孔下 → 右行 → 右端下行 → 左行到取球位 */
-  [0.00, 2.86, 0.70], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
-  [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
+const UPPER_PTS = [  /* 上层横轨（相对 cx,cz）：出球孔正下方（落球停顿）→ 右端，微下坡向右 */
+  [0.00, 2.78, 0.70], [0.60, 2.76, 0.70], [1.18, 2.74, 0.70],
+];
+const LOWER_PTS = [  /* 下层展示轨：右端接球 → 左行下坡 → 取球位 */
+  [1.20, 2.65, 0.70], [0.00, 2.62, 0.52], [-1.10, 2.57, 0.52],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
@@ -468,15 +470,21 @@ function buildMachine(cfg) {
     var gatePlate = plate, gateBaseZ = gateZ;
   }
 
-  /* ---- ③ 出球滑道（DESIGN.md §4 + 用户箭头图 + BV1wb4y1f7Hu 实拍）：
-          出球孔 → 竖井 → 上横管向右 → 右端下行 → 下横槽向左 → 取球位。
-          全程一根透明有机玻璃单球管，只允许一球通过 ---- */
-  const railCurve = new THREE.CatmullRomCurve3(RAIL_PTS.map(q => new THREE.Vector3(cx + q[0], q[1], cz + q[2])));
-  const railLen = railCurve.getLength();
+  /* ---- ③ 出球滑道（两段式，对照真机视频/参考图）：
+          出球孔 → 自由下落 → 上层横轨（停顿后向右滚） → 右端掉落 → 下层展示轨向左滚 → 取球位 ---- */
+  const railUp = new THREE.CatmullRomCurve3(UPPER_PTS.map(q => new THREE.Vector3(cx + q[0], q[1], cz + q[2])));
+  const railLow = new THREE.CatmullRomCurve3(LOWER_PTS.map(q => new THREE.Vector3(cx + q[0], q[1], cz + q[2])));
+  const railUpLen = railUp.getLength(), railLowLen = railLow.getLength();
   {
-    const tube = new THREE.Mesh(new THREE.TubeGeometry(railCurve, 90, R_BALL + 0.035, 14, false), acrylicMat);
-    tube.renderOrder = 7; scene.add(tube);
-    const end = railCurve.getPointAt(1);
+    const t1 = new THREE.Mesh(new THREE.TubeGeometry(railUp, 40, R_BALL + 0.035, 14, false), acrylicMat);
+    const t2 = new THREE.Mesh(new THREE.TubeGeometry(railLow, 60, R_BALL + 0.035, 14, false), acrylicMat);
+    t1.renderOrder = t2.renderOrder = 7; scene.add(t1, t2);
+    /* 右端竖直掉落导管（上轨末端 → 下轨起点） */
+    const da = railUp.getPointAt(1), db = railLow.getPointAt(0);
+    const dropCurve = new THREE.CatmullRomCurve3([da, new THREE.Vector3((da.x + db.x) / 2, (da.y + db.y) / 2, (da.z + db.z) / 2), db]);
+    const t3 = new THREE.Mesh(new THREE.TubeGeometry(dropCurve, 10, R_BALL + 0.035, 12, false), acrylicMat);
+    t3.renderOrder = 7; scene.add(t3);
+    const end = railLow.getPointAt(1);
     const stopper = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.26, 12), acrylicMat);
     stopper.position.set(end.x, end.y + R_BALL + 0.04, end.z); stopper.renderOrder = 7; scene.add(stopper);
   }
@@ -486,7 +494,9 @@ function buildMachine(cfg) {
 
   /* ---- 球：初始停在预览架竖管内（管内可叠多颗） ---- */
   const m = {
-    ...cfg, discSpins, valvePivot, rackDefs, railCurve, railLen, gatePlate, gateZ0: gateBaseZ,
+    ...cfg, discSpins, valvePivot, rackDefs, railUp, railUpLen, railLow, railLowLen, gatePlate, gateZ0: gateBaseZ,
+    upStart: railUp.getPointAt(0), upEnd: railUp.getPointAt(1),
+    lowStart: railLow.getPointAt(0), lowEnd: railLow.getPointAt(1),
     balls: [], agit: 0, agitTarget: 0,
     loadOpen: false, holeOpen: false,
     cosExit, exitDirW: cfg.exitDir.clone(),
@@ -625,7 +635,9 @@ function stepInBall(b, m, dt) {
     _n.copy(_rel).divideScalar(d);
     if (_n.dot(m.exitDirW) > m.cosExit && d > m.R - R_BALL * 1.6) {
       b.state = 'rail'; b.placed = false;
-      b.s = 0; b.vs = 2.0;                       /* 进入滑道起点（竖井口） */
+      b.phase = 'drop1';                             /* 出孔后自由下落（两段式第一段） */
+      b.p.copy(m.exitW);
+      b.v.copy(m.exitDirW).multiplyScalar(0.8);
       m.capturedBall = b;
       m.holeOpen = false;               /* 真机档杆动作：出一颗立即关阀 */
       /* 已出的球留在滑道里排队（摇完后实体球排成一行 = 开奖结果） */
@@ -646,30 +658,62 @@ function stepInBall(b, m, dt) {
   }
 }
 
-/* 出球滑道物理：弧长参数化曲线，球沿曲线 1D 滚动 + 排队 */
-function stepRailBall(b, m, dt) {
-  b.railT = (b.railT || 0) + dt;
-  const L = m.railLen;
-  const sA = Math.max(0, b.s - 0.03), sB = Math.min(L, b.s + 0.03);
-  const slope = (m.railCurve.getPointAt(sB / L).y - m.railCurve.getPointAt(sA / L).y) / Math.max(0.015, sB - sA);
+/* 出球滑道物理（两段式）：drop1 出孔自由下落 → pause 上轨起点停顿 → up 上轨右滚
+   → drop2 右端掉落 → low 下轨左滚 + 排队。1D 弧长滚动 + 排队碰撞 */
+const RAIL_PAUSE_T = 0.45;                         /* 落到上轨后的停顿（对照真机节奏） */
+function rollOn(curve, L, b, m, dt) {
+  const sA = Math.max(0, b.s - 0.03) / L, sB = Math.min(L, b.s + 0.03) / L;
+  const slope = (curve.getPointAt(sB).y - curve.getPointAt(sA).y) / Math.max(0.015, (sB - sA) * L);
   b.vs += -G * slope * dt;                       /* 重力沿曲线切向分量 */
   b.vs *= (1 - 0.55 * dt);
   b.s += b.vs * dt;
-  if (b.s < 0) { b.s = 0; b.vs *= -0.25; }        /* 滑道起点 */
-  if (b.s > L) { b.s = L; b.vs *= -0.25; }        /* 取球位挡块 */
-  const u = b.s / L;
-  const pt = m.railCurve.getPointAt(u);
+  if (b.s < 0) { b.s = 0; b.vs *= -0.25; }
+  const u = Math.min(1, b.s / L);
+  const pt = curve.getPointAt(u);
   b.p.set(pt.x, pt.y + R_BALL, pt.z);
-  b.v.copy(m.railCurve.getTangentAt(u)).multiplyScalar(b.vs);
-  /* 停稳判定（槽内停稳即入位；5s 超时保险）→ 入位显示 */
-  if (!b.placed && ((b.railT > 1.5 && Math.abs(b.vs) < 0.35) || b.railT > 5)) {
-    b.placed = true;
-    onBallPlaced(b, m);
+  b.v.copy(curve.getTangentAt(u)).multiplyScalar(b.vs);
+}
+function stepRailBall(b, m, dt) {
+  b.railT = (b.railT || 0) + dt;
+  if (b.phase === 'drop1') {
+    b.v.y -= G * dt;
+    b.p.addScaledVector(b.v, dt);
+    if (b.p.y <= m.upStart.y + R_BALL) {           /* 落到上轨：停顿一下再滚 */
+      b.phase = 'pause'; b.pauseT = 0; b.s = 0;
+      b.p.set(m.upStart.x, m.upStart.y + R_BALL, m.upStart.z);
+      b.v.set(0, 0, 0);
+    }
+  } else if (b.phase === 'pause') {
+    b.pauseT += dt;
+    if (b.pauseT > RAIL_PAUSE_T) { b.phase = 'up'; b.s = 0; b.vs = 0.15; }
+  } else if (b.phase === 'up') {
+    rollOn(m.railUp, m.railUpLen, b, m, dt);
+    if (b.s >= m.railUpLen) {                      /* 上轨右端：掉向下轨 */
+      b.phase = 'drop2';
+      b.p.set(m.upEnd.x, m.upEnd.y + R_BALL, m.upEnd.z);
+      b.v.set(0.2, Math.min(b.vs, 0.5), 0);
+    }
+  } else if (b.phase === 'drop2') {
+    b.v.y -= G * dt;
+    b.p.addScaledVector(b.v, dt);
+    if (b.p.y <= m.lowStart.y + R_BALL) {          /* 落到下轨 */
+      b.phase = 'low'; b.s = 0;
+      b.vs = Math.max(0.18, -b.v.x * 0.4);
+      b.p.set(m.lowStart.x, m.lowStart.y + R_BALL, m.lowStart.z);
+    }
+  } else { /* low：下轨滚动到取球位排队 */
+    rollOn(m.railLow, m.railLowLen, b, m, dt);
+    if (b.s > m.railLowLen) { b.s = m.railLowLen; b.vs *= -0.25; }  /* 取球位挡块 */
+    /* 入位 = 在下轨排队区（左端）停稳；10s 超时保险。刚落轨慢速不算停稳 */
+    if (!b.placed && ((b.railT > 1.5 && Math.abs(b.vs) < 0.35 && b.s > m.railLowLen - 1.6) || b.railT > 10)) {
+      b.placed = true;
+      onBallPlaced(b, m);
+    }
   }
 }
 
-/* 管内一维碰撞：球在弧长轴上排队 */
-function collideRail(arr, m) {
+/* 管内一维碰撞：球在弧长轴上排队（按所在轨道分组） */
+function collideRail(arr, total) {
   arr.sort((a, c) => a.s - c.s);
   const minD = R_BALL * 2 + 0.02;
   for (let i = 0; i < arr.length - 1; i++) {
@@ -678,7 +722,7 @@ function collideRail(arr, m) {
     if (d < minD) {
       const push = (minD - d) / 2;
       a.s = Math.max(0, a.s - push);
-      c.s = Math.min(m.railLen, c.s + push);
+      c.s = Math.min(total, c.s + push);
       if (a.vs > c.vs) { const t = a.vs; a.vs = c.vs; c.vs = t * 0.5; }
     }
   }
@@ -808,7 +852,8 @@ function updateMachine(m, dt) {
     }
     collideGroup(inBalls);
     collideTubes(m);
-    collideRail(railBalls, m);
+    collideRail(railBalls.filter(b => b.phase === 'up' || b.phase === 'pause'), m.railUpLen);
+    collideRail(railBalls.filter(b => b.phase === 'low'), m.railLowLen);
     /* 旋转拨块：真实物理件，逐块碰撞把球实际拨动（混合的动力来源） */
     if (m.agit > 0.01) {
       m.rotPhase[0] += m.wInner * m.agit * DT;
@@ -909,6 +954,7 @@ function resetAll() {
       b.p.copy(b.home);
       b.v.set(0, 0, 0);
       b.state = 'rack'; b.placed = false; b.railT = 0;
+      b.phase = 'drop1'; b.pauseT = 0;
       b.s = 0; b.vs = 0; b.sT = b.home ? R_BALL + 0.12 : 0;
       b.tube = null;
       /* 重新挂回各自的预览管（按 home 找归属管） */
