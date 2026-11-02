@@ -60,10 +60,14 @@ function buildRack(cfg){
 
 function makeMachine(cfg){
   const rackDefs=buildRack(cfg);
-  const balls=[]; let num=0;
+  /* 编号随机洗牌（Fisher–Yates），与页面一致：物理选位置，编号每局随机 */
+  const nums=Array.from({length:cfg.count},(_,i)=>i+1);
+  for(let i=nums.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [nums[i],nums[j]]=[nums[j],nums[i]]; }
+  const balls=[]; let idx=0;
   for(const td of rackDefs){
     for(let k=0;k<td.n;k++){
-      if(++num>cfg.count) break;
+      if(idx>=nums.length) break;
+      const num=nums[idx++];
       const sT=R_BALL+0.12+k*(R_BALL*2+0.01);
       const p=[td.base[0]+td.dir[0]*sT, td.base[1]+td.dir[1]*sT, td.base[2]+td.dir[2]*sT];
       balls.push({num, p, home:p.slice(), tube:td, sT, vsT:0,
