@@ -5,16 +5,16 @@
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const RAIL_PTS = [
-  [0.00, 2.96, 0.80], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.85, 0.64], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:2.91, rHub:0.18, gapInner:0.22, rOuter:0.70, wInner:4.5, wOuter:-2.8,
-    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.725,0.689],
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:4.5, wOuter:-2.8,
+    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:2.91, rHub:0.18, gapInner:0.22, rOuter:0.70, wInner:4.5, wOuter:-2.8,
-    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.725,0.689],
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:4.5, wOuter:-2.8,
+    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 
@@ -119,7 +119,11 @@ function stepInBall(b,m,dt){
 
   // 转子顶面支撑：出球孔正上方留缺口
   const floorC=m.discY+0.05+R_BALL;
-  if(p[1]<floorC){ p[1]=floorC; if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
+  const prr=Math.hypot(p[0]-m.cx,p[2]-m.cz);
+  const maxR=Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2))+0.02;
+  if(p[1]<floorC){ p[1]=floorC;
+    if(prr>maxR){ const k=maxR/prr; p[0]=m.cx+(p[0]-m.cx)*k; p[2]=m.cz+(p[2]-m.cz)*k; }
+    if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
 
   // 落球收拢：落到开口边缘外侧的球向心收
   if(m.loadOpen && p[1]>m.cy+0.4){
