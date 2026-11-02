@@ -237,16 +237,23 @@ function makeBallMesh(num, color) {
   const grad = ctx.createRadialGradient(160, 70, 20, 256, 128, 280);
   grad.addColorStop(0, 'rgba(255,255,255,.30)'); grad.addColorStop(1, 'rgba(0,0,0,.22)');
   ctx.fillStyle = grad; ctx.fillRect(0, 0, 512, 256);
-  for (const cx of [64, 192, 320, 448]) {
-    const disc = ctx.createRadialGradient(cx - 14, 114, 6, cx, 128, 58);
+  /* 真机样式：球面 10 个白圈数字（上4 + 赤道2 + 下4，行间交错）——
+     球转到任意朝向都有多个数字正对视线 */
+  const spots = [
+    [64, 61], [192, 61], [320, 61], [448, 61],
+    [160, 128], [416, 128],
+    [64, 195], [192, 195], [320, 195], [448, 195],
+  ];
+  for (const [cx, cy] of spots) {
+    const disc = ctx.createRadialGradient(cx - 10, cy - 8, 4, cx, cy, 42);
     disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.8, '#f2f2f2'); disc.addColorStop(1, '#d8d8d8');
     ctx.fillStyle = disc;
-    ctx.beginPath(); ctx.arc(cx, 128, 54, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 39, 0, Math.PI * 2); ctx.fill();
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.stroke();
     ctx.fillStyle = '#111';
-    ctx.font = 'bold 76px Arial';
+    ctx.font = 'bold 54px Arial';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(num, cx, 132);
+    ctx.fillText(num, cx, cy + 3);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -706,7 +713,6 @@ function onBallPlaced(b, m) {
   const el = slotEls[totalIdx];
   if (el) { el.textContent = b.num; el.classList.add('filled', 'pop'); }
   m.doneCount++;
-  b.faceTimer = 0;
 }
 
 function updateMachine(m, dt) {
@@ -843,16 +849,10 @@ function updateMachine(m, dt) {
   }
   if (m.acc > DT * 8) m.acc = 0;   /* 卡顿后丢弃积压，避免爆炸 */
 
-  /* mesh 同步 + 滚动旋转 */
+  /* mesh 同步 + 滚动旋转（球面多数字，入位后保持原姿态即可，无需摆正） */
   for (const b of m.balls) {
     if (b.state === 'rack') continue;
-    if (b.placed) {
-      b.faceTimer = (b.faceTimer ?? 0) + dt;
-      const k = Math.min(1, b.faceTimer / 0.4);
-      b.mesh.rotation.x *= (1 - k);
-      b.mesh.rotation.z *= (1 - k);
-      b.mesh.rotation.y += (-Math.PI / 4 - b.mesh.rotation.y) * k;
-    } else {
+    if (!b.placed) {
       const sp = Math.hypot(b.v.x, b.v.z);
       if (sp > 0.05) {
         b.mesh.rotation.x -= b.v.z / R_BALL * DT * 0.9;
@@ -875,7 +875,7 @@ function resetAll() {
     for (const b of m.balls) {
       b.p.copy(b.home);
       b.v.set(0, 0, 0);
-      b.state = 'rack'; b.placed = false; b.faceTimer = 0; b.railT = 0;
+      b.state = 'rack'; b.placed = false; b.railT = 0;
       b.s = 0; b.vs = 0; b.sT = b.home ? R_BALL + 0.12 : 0;
       b.tube = null;
       /* 重新挂回各自的预览管（按 home 找归属管） */
@@ -907,17 +907,9 @@ let last = performance.now();
 function animate(now) {
   requestAnimationFrame(animate);
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (state.running || machines.some(m => m.balls.some(b => b.state !== 'rack' && (!b.placed || b.faceTimer < 0.5)))) {
+  if (state.running || machines.some(m => m.phase !== 'idle')) {
     for (const m of machines) {
       if (m.phase !== 'idle') updateMachine(m, dt);
-      else {
-        for (const b of m.balls) if (b.placed && b.faceTimer < 0.5) {
-          b.faceTimer += dt;
-          const k = Math.min(1, b.faceTimer / 0.4);
-          b.mesh.rotation.y += (-Math.PI / 4 - b.mesh.rotation.y) * k;
-          b.mesh.position.copy(b.p);
-        }
-      }
     }
   }
   controls.update();
