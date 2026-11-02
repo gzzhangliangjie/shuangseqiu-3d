@@ -186,7 +186,7 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
 const RAIL_PTS = [   /* 相对机器中心 (cx,cz)：出球孔下 → 右行 → 右端下行 → 左行到取球位 */
-  [0.00, 3.08, 0.90], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.96, 0.80], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
@@ -200,10 +200,10 @@ const MACH_CFG = [
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 9 * Math.PI / 180,             /* 底部小孔：孔径≈1.15×球径，只允许一球通过 */
-    exitDir: new THREE.Vector3(0, -0.597, 0.802).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
+    exitDir: new THREE.Vector3(0, -0.725, 0.689).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
-    discY: 3.05, rHub: 0.18, gapInner: 0.22, rOuter: 0.85, wInner: 4.5, wOuter: -2.8,
+    discY: 2.91, rHub: 0.18, gapInner: 0.22, rOuter: 0.70, wInner: 4.5, wOuter: -2.8,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -213,8 +213,8 @@ const MACH_CFG = [
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 9 * Math.PI / 180,
-    exitDir: new THREE.Vector3(0, -0.597, 0.802).normalize(),
-    discY: 3.05, rHub: 0.18, gapInner: 0.22, rOuter: 0.85, wInner: 4.5, wOuter: -2.8,
+    exitDir: new THREE.Vector3(0, -0.725, 0.689).normalize(),
+    discY: 2.91, rHub: 0.18, gapInner: 0.22, rOuter: 0.70, wInner: 4.5, wOuter: -2.8,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -327,7 +327,7 @@ function buildMachine(cfg) {
   const brightMetal = new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2 });
   /* 静态支撑盘（转轮下面的托板，出球孔处开孔）+ 转轮外围的静止托环（球堆外圈坐上面） */
   {
-    const supShape = new THREE.Shape(); supShape.absarc(0, 0, 0.70, 0, Math.PI * 2);
+    const supShape = new THREE.Shape(); supShape.absarc(0, 0, 0.66, 0, Math.PI * 2);
     const supGeo = new THREE.ExtrudeGeometry(supShape, { depth: 0.04, bevelEnabled: false, curveSegments: 48 });
     supGeo.rotateX(-Math.PI / 2);
     const sup = new THREE.Mesh(supGeo, acrylicMat);
