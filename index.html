@@ -368,15 +368,21 @@ function buildMachine(cfg) {
   ringGeo.rotateX(-Math.PI / 2);
   const ring = new THREE.Mesh(ringGeo, acrylicMat);
   ring.renderOrder = 6; outer.add(ring);
-  /* 外圈 6 大块，同样铬金属 */
+  /* 外圈两列 6 大块（中列+缘列，相位错 30°）：径向全覆盖，贴壁公转环被缘列犁散 */
   const wedgeOut = new THREE.CylinderGeometry(0.045, 0.070, 0.070, 4, 1);
   wedgeOut.rotateY(Math.PI / 4);
-  for (let k = 0; k < 6; k++) {
-    const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
-    const blk = new THREE.Mesh(wedgeOut, acrylicMat);
-    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.07, 0); blk.renderOrder = 6;
-    hold.add(blk); outer.add(hold);
+  for (let ring = 0; ring < 2; ring++) {
+    const rr = cfg.gapInner + (cfg.rOuter - cfg.gapInner) * (ring === 0 ? 0.18 : 0.93);
+    for (let k = 0; k < 6; k++) {
+      const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2 + ring * Math.PI / 6;
+      const blk = new THREE.Mesh(wedgeOut, acrylicMat);
+      blk.position.set(rr, 0.07, 0); blk.renderOrder = 6;
+      hold.add(blk); outer.add(hold);
+    }
   }
+  /* 盘面凸圈（真机同款挡圈）：球聚在圈上被拨块打；随外盘转动（圆环体对称，视觉不动） */
+  const bead = new THREE.Mesh(new THREE.TorusGeometry(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.035, 12, 64), acrylicMat);
+  bead.rotation.x = Math.PI / 2; bead.position.y = 0.05; bead.renderOrder = 6; outer.add(bead);
   discSpins.push(outer);
 
   /* ---- ① 号码球预览架（对照参考图）：等长透明管沿一条弧排成单排（冠形），
@@ -457,8 +463,9 @@ function buildMachine(cfg) {
     capturedBall: null, doneCount: 0,
     /* 拨块：真实物理件（与视觉梯形块同尺寸同转速），碰撞实际拨动小球 */
     pegList: [
-      { r: cfg.rHub * 0.62, rp: 0.055, w: cfg.wInner, n: 4, ph: 0.4 },
-      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, rp: 0.065, w: cfg.wOuter, n: 6, ph: 0 },
+      { r: cfg.rHub * 0.62, rp: 0.055, w: cfg.wInner, rot: 0, n: 4, ph: 0.4 },
+      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.18, rp: 0.065, w: cfg.wOuter, rot: 1, n: 6, ph: 0 },
+      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.93, rp: 0.065, w: cfg.wOuter, rot: 1, n: 6, ph: Math.PI / 6 },
     ],
     rotPhase: [0, 0],
   };
@@ -482,6 +489,8 @@ function buildMachine(cfg) {
   return m;
 }
 MACH_CFG.forEach(buildMachine);
+window.machines = machines;                       /* 调试/端到端验证钩子 */
+window.camera = camera; window.controls = controls;
 
 /* ================= HUD ================= */
 const resultsEl = document.getElementById('results');
@@ -523,7 +532,7 @@ function stepInBall(b, m, dt) {
     if (Math.abs(p.y - m.discY) < 0.30) {
       const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter ? m.wOuter : 0);
       if (w !== 0) {
-        const sp = w * m.agit * Math.min(rr, m.rOuter) * 0.55;
+        const sp = w * m.agit * Math.min(rr, m.rOuter) * 0.42;
         v.x += -dz / (rr + 1e-4) * sp * dt;
         v.z += dx / (rr + 1e-4) * sp * dt;
       }
@@ -769,10 +778,9 @@ function updateMachine(m, dt) {
       m.rotPhase[1] += m.wOuter * m.agit * DT;
       for (const b of inBalls) {
         if (Math.abs(b.p.y - m.discY - 0.09) > 0.14) continue;
-        for (let i = 0; i < 2; i++) {
-          const pg = m.pegList[i];
+        for (const pg of m.pegList) {
           for (let k = 0; k < pg.n; k++) {
-            const th = m.rotPhase[i] + pg.ph + k / pg.n * Math.PI * 2;
+            const th = m.rotPhase[pg.rot] + pg.ph + k / pg.n * Math.PI * 2;
             const px = m.cx + Math.cos(th) * pg.r, pz = m.cz - Math.sin(th) * pg.r;
             const dx = b.p.x - px, dz = b.p.z - pz;
             const dd = Math.hypot(dx, dz), minD = R_BALL + pg.rp;
@@ -787,9 +795,35 @@ function updateMachine(m, dt) {
               if (vn < 0) { b.v.x -= vn * nx * 1.05; b.v.z -= vn * nz * 1.05; }
               b.v.x += (svx - b.v.x) * 0.45; b.v.z += (svz - b.v.z) * 0.45;
               /* 撞击点在球心下方：正面撞击把球向前上方挑起，产生真实翻滚 */
-              if (vn < -0.5) b.v.y += Math.min(-vn, 2.0) * 0.3;
+              if (vn < -0.5) b.v.y += Math.min(-vn, 2.0) * 0.15;
             }
           }
+        }
+      }
+    }
+    /* 盘面凸圈（真机同款挡圈）：低挡环随外盘刚体转动（全速摩擦，比拖带 0.55 快 →
+       持续犁过球层），球被拨块推压或堆挤撞圈时被垫起翻越/弹回 —— 打断贴盘公转层 */
+    if (m.agit > 0.01) {
+      const rc = 0.035, ringR = m.gapInner + (m.rOuter - m.gapInner) * 0.55;
+      const topY = m.discY + 0.05, sv = m.wOuter * m.agit * ringR;
+      for (const b of inBalls) {
+        const bx = b.p.x - m.cx, bz = b.p.z - m.cz;
+        const br = Math.hypot(bx, bz);
+        if (br < 1e-4 || Math.abs(b.p.y - topY) > 0.4) continue;
+        const dr = br - ringR, dy = b.p.y - topY;
+        const dd = Math.hypot(dr, dy), minD = R_BALL + rc;
+        if (dd < minD && dd > 1e-6) {
+          const nr = dr / dd, ny = dy / dd, push = minD - dd;
+          const ux = bx / br, uz = bz / br;
+          b.p.x += ux * push * nr; b.p.z += uz * push * nr; b.p.y += push * ny;
+          /* 法向低弹性缓冲 */
+          const nvx = ux * nr, nvy = ny, nvz = uz * nr;
+          const vn = b.v.x * nvx + b.v.y * nvy + b.v.z * nvz;
+          if (vn < 0) { b.v.x -= vn * nvx * 1.3; b.v.y -= vn * nvy * 1.3; b.v.z -= vn * nvz * 1.3; }
+          /* 切向：圈面刚体转速（无打滑），把贴圈球带到全速 */
+          const tx = -uz, tz = ux;
+          const dv = sv - (b.v.x * tx + b.v.z * tz);
+          b.v.x += tx * dv * 0.5; b.v.z += tz * dv * 0.5;
         }
       }
     }

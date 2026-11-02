@@ -75,8 +75,9 @@ function makeMachine(cfg){
     exitW:[cfg.cx+cfg.exitDir[0]*cfg.R, cfg.cy+cfg.exitDir[1]*cfg.R, cfg.cz+cfg.exitDir[2]*cfg.R],
     // 拨块：真实物理件（与页面视觉梯形块同尺寸同转速），碰撞实际拨动小球
     pegList:[
-      {r:cfg.rHub*0.62, rp:0.055, w:cfg.wInner, n:4, ph:0.4},
-      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.55, rp:0.065, w:cfg.wOuter, n:6, ph:0},
+      {r:cfg.rHub*0.62, rp:0.055, w:cfg.wInner, rot:0, n:4, ph:0.4},
+      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.18, rp:0.065, w:cfg.wOuter, rot:1, n:6, ph:0},
+      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.93, rp:0.065, w:cfg.wOuter, rot:1, n:6, ph:Math.PI/6},
     ],
     rotPhase:[0,0]};
 }
@@ -106,7 +107,7 @@ function stepInBall(b,m,dt){
     if(Math.abs(p[1]-m.discY)<0.30){
       const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter?m.wOuter:0);
       if(w!==0){
-        const sp=w*m.agit*Math.min(rr,m.rOuter)*0.55;
+        const sp=w*m.agit*Math.min(rr,m.rOuter)*0.42;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
       }
     }
@@ -224,7 +225,7 @@ function collideGroup(arr){
 }
 
 function runMachine(m, log){
-  let t=0, placedCount=0, stirT=0, holePhase=false;
+  let t=0, placedCount=0, stirT=0, holePhase=false, probed=false;
   while(t<150){
     t+=DT;
     if(!m.captured){
@@ -245,13 +246,14 @@ function runMachine(m, log){
       m.rotPhase[0]+=m.wInner*m.agit*DT; m.rotPhase[1]+=m.wOuter*m.agit*DT;
       for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
         if(Math.abs(b.p[1]-m.discY-0.09)>0.14)continue;
-        for(let i=0;i<2;i++){ const pg=m.pegList[i];
+        for(const pg of m.pegList){
           for(let k=0;k<pg.n;k++){
-            const th=m.rotPhase[i]+pg.ph+k/pg.n*Math.PI*2;
+            const th=m.rotPhase[pg.rot]+pg.ph+k/pg.n*Math.PI*2;
             const px=m.cx+Math.cos(th)*pg.r, pz=m.cz-Math.sin(th)*pg.r;
             const dx=b.p[0]-px, dz=b.p[2]-pz;
             const dd=Math.hypot(dx,dz), minD=R_BALL+pg.rp;
             if(dd<minD&&dd>1e-6){
+              if(m.hitProbe) m.hitProbe[Math.min(5,Math.floor((Math.hypot(b.p[0]-m.cx,b.p[2]-m.cz)-0.08)/0.08))]++;
               const nx=dx/dd,nz=dz/dd;
               b.p[0]=px+nx*minD; b.p[2]=pz+nz*minD;
               const svx=-pg.w*m.agit*pg.r*Math.sin(th);
@@ -261,9 +263,33 @@ function runMachine(m, log){
               if(vn<0){ b.v[0]-=vn*nx*1.05; b.v[2]-=vn*nz*1.05; }
               b.v[0]+=(svx-b.v[0])*0.45; b.v[2]+=(svz-b.v[2])*0.45;
               // 撞击点在球心下方：正面撞击把球向前上方挑起，产生真实翻滚
-              if(vn<-0.5) b.v[1]+=Math.min(-vn,2.0)*0.3;
+              if(vn<-0.5) b.v[1]+=Math.min(-vn,2.0)*0.15;
             }
           }
+        }
+      }
+    }
+    // 盘面凸圈（真机同款挡圈）：低挡环随外盘刚体转动（全速摩擦，比拖带 0.55 快 →
+    // 持续犁过球层），球被拨块推压或堆挤撞圈时被垫起翻越/弹回 —— 打断贴盘公转层
+    if(m.agit>0.01){
+      const rc=0.035, ringR=m.gapInner+(m.rOuter-m.gapInner)*0.55;
+      const topY=m.discY+0.05, sv=m.wOuter*m.agit*ringR;
+      for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
+        const bx=b.p[0]-m.cx, bz=b.p[2]-m.cz;
+        const br=Math.hypot(bx,bz);
+        if(br<1e-4||Math.abs(b.p[1]-topY)>0.4)continue;
+        const dr=br-ringR, dy=b.p[1]-topY;
+        const dd=Math.hypot(dr,dy), minD=R_BALL+rc;
+        if(dd<minD&&dd>1e-6){
+          const nr=dr/dd, ny=dy/dd, push=minD-dd;
+          const ux=bx/br, uz=bz/br;
+          b.p[0]+=ux*push*nr; b.p[2]+=uz*push*nr; b.p[1]+=push*ny;
+          const nvx=ux*nr, nvy=ny, nvz=uz*nr;
+          const vn=b.v[0]*nvx+b.v[1]*nvy+b.v[2]*nvz;
+          if(vn<0){ b.v[0]-=vn*nvx*1.3; b.v[1]-=vn*nvy*1.3; b.v[2]-=vn*nvz*1.3; }
+          const tx=-uz, tz=ux;
+          const dv=sv-(b.v[0]*tx+b.v[2]*tz);
+          b.v[0]+=tx*dv*0.5; b.v[2]+=tz*dv*0.5;
         }
       }
     }
@@ -276,6 +302,20 @@ function runMachine(m, log){
       }
     }
     if(placedCount>=m.draws) break;
+    // 搅拌中段径向分布探针：0.08起每0.08一档（中部应满、贴壁带不应独大）
+    if(!probed && t>12 && m.agit>0.5 && !m.holeOpen){
+      probed=true;
+      const rs=m.balls.filter(b=>b.state==='in'&&!b.tube).map(b=>Math.hypot(b.p[0]-m.cx,b.p[2]-m.cz));
+      const bands=[0,0,0,0,0,0];
+      for(const r of rs) bands[Math.min(5,Math.floor((r-0.08)/0.08))]++;
+      log(`${m.key}: t=12s 径向分布[0.08-0.56/0.08档]=${bands.join('/')} 飞行=${m.balls.filter(b=>b.state==='in'&&!b.tube&&b.p[1]>m.discY+0.25).length}`);
+    }
+    // 拨块命中探针（t=10~16s 窗口）：各径向档命中次数 —— 圈上的球必须被打到
+    if(t>10&&t<16&&!m.hitProbe) m.hitProbe=[0,0,0,0,0,0];
+    if(m.hitProbe&&t>=16&&!m.hitLogged){
+      m.hitLogged=true;
+      log(`${m.key}: 拨块命中[0.08-0.56/0.08档,10-16s]=${m.hitProbe.join('/')}`);
+    }
   }
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }
   const done=m.balls.filter(b=>b.placed);
