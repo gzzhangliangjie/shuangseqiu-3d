@@ -11,3 +11,4 @@ Thumbs.db
 node_modules/
 .ref/
 index.html.bak
+_c.js

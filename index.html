@@ -638,7 +638,8 @@ function updateMachine(m, dt) {
       m.loadOpen = true;
       for (const b of m.balls) { b.state = 'in'; b.v.set(-(b.p.x - m.cx) * 2.0, -1.5, -(b.p.z - m.cz) * 2.0); }
     }
-    if (m.loadOpen && m.balls.every(b => b.p.y < m.cy - 0.1)) {
+    /* 球堆成锥形后顶部球心可到 cy+R*0.42 左右，用宽阈值 + 超时兜底，避免死锁 */
+    if (m.loadOpen && (m.balls.every(b => b.p.y < m.cy + m.R * 0.45) || m.timer > 6)) {
       m.loadOpen = false;
       m.inletCap.position.x = 0;
       m.phase = 'stir'; m.timer = 0; m.agitTarget = 1;
@@ -697,14 +698,20 @@ function updateMachine(m, dt) {
   }
   m.valvePivot.rotation.x = -(m.holeOpen ? 1 : 0) * 1.5;
 
-  /* 球物理 */
-  const inBalls = [], railBalls = [];
-  for (const b of m.balls) {
-    if (b.state === 'in') { stepInBall(b, m, DT); inBalls.push(b); }
-    else if (b.state === 'rail') { stepRailBall(b, m, DT); railBalls.push(b); }
+  /* 球物理：按真实时间累积子步（固定步长 1/120），保证任何帧率下速度一致 */
+  m.acc = (m.acc || 0) + dt;
+  let sub = 0;
+  while (m.acc >= DT && sub < 8) {
+    const inBalls = [], railBalls = [];
+    for (const b of m.balls) {
+      if (b.state === 'in') { stepInBall(b, m, DT); inBalls.push(b); }
+      else if (b.state === 'rail') { stepRailBall(b, m, DT); railBalls.push(b); }
+    }
+    collideGroup(inBalls);
+    collideRail(railBalls, m);
+    m.acc -= DT; sub++;
   }
-  collideGroup(inBalls);
-  collideRail(railBalls, m);
+  if (m.acc > DT * 8) m.acc = 0;   /* 卡顿后丢弃积压，避免爆炸 */
 
   /* mesh 同步 + 滚动旋转 */
   for (const b of m.balls) {
