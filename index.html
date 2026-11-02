@@ -202,8 +202,9 @@ const MACH_CFG = [
     exitHalf: 5.5 * Math.PI / 180,             /* 底部小孔：孔径≈1.15×球径，只允许一球通过 */
     exitDir: new THREE.Vector3(0, -0.9, 0.436).normalize(),
     holeUX: 0.0, holeUZ: 0.50,                 /* 孔口在盘面上的水平投影（相对机器中心） */
-    /* 搅拌器（专利 US6145836 + 视频截图）：内盘 3 块 + 外环带 6 块方形拨块，反向不同速 */
-    discY: 2.95, rHub: 0.40, gapInner: 0.52, rOuter: 1.02, wInner: 4.5, wOuter: -2.8,
+    /* 搅拌器（专利 US6145836 + 视频截图）：内盘 3 块 + 外环带 6 块方形拨块，反向不同速。
+       尺寸受球壳约束：盘面高度处球壳水平半径 = √(R²-(cy-discY)²) ≈ 0.88，外缘必须留缝在玻璃内 */
+    discY: 3.05, rHub: 0.34, gapInner: 0.44, rOuter: 0.82, wInner: 4.5, wOuter: -2.8,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -215,7 +216,7 @@ const MACH_CFG = [
     exitHalf: 5.5 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.9, 0.436).normalize(),
     holeUX: 0.0, holeUZ: 0.50,
-    discY: 2.95, rHub: 0.40, gapInner: 0.52, rOuter: 1.02, wInner: 4.5, wOuter: -2.8,
+    discY: 3.05, rHub: 0.34, gapInner: 0.44, rOuter: 0.82, wInner: 4.5, wOuter: -2.8,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -355,9 +356,9 @@ function buildMachine(cfg) {
     hold.add(block); outer.add(hold);
   }
   discSpins.push(outer);
-  /* 传动：中心银色轴（从底座平台伸上来，静止件） */
-  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.46, 10), brightMetal);
-  axle.position.set(cx, rotorY - 0.23, cz); scene.add(axle);
+  /* 传动：中心银色轴（从球底伸上来，完全收在球壳内部） */
+  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 10), brightMetal);
+  axle.position.set(cx, rotorY - 0.18, cz); scene.add(axle);
 
   /* ---- ① 号码球预览架（对照参考图）：等长透明管沿一条弧排成单排（冠形），
           插在球壳正后方，管身微外倾，管底削尖伸入球壳内部；摇奖前球全在管内。
@@ -732,7 +733,8 @@ function updateMachine(m, dt) {
 
   m.agit += (m.agitTarget - m.agit) * Math.min(1, dt * 2);
   if (m.agit > 0.01) {
-    for (let i = 0; i < 2; i++) m.discSpins[i].rotation.y += (i === 0 ? 14 : -9) * m.agit * dt;
+    /* 视觉转速与物理场一致（wInner/wOuter），看得见搅拌方向与球被带动的方向吻合 */
+    for (let i = 0; i < 2; i++) m.discSpins[i].rotation.y += (i === 0 ? m.wInner : m.wOuter) * m.agit * dt;
   }
   m.valvePivot.rotation.x = -(m.holeOpen ? 1 : 0) * 1.5;
 
