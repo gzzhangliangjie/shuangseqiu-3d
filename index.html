@@ -526,9 +526,50 @@ function buildMachine(cfg) {
     const _Y = new THREE.Vector3(0, 1, 0);
     const _X = new THREE.Vector3(1, 0, 0);
     const slot = Math.acos(RAIL_OPEN_COS);
-    /* 低侧壁：壁顶只到球心下方 1cm，球露出约 55%；壁高/壁心与物理 RAIL_WALLTOP 同源 */
-    const wallH = RAIL_WALLTOP + RAIL_FLOOR + 0.03;   /* 壁总高：槽底下方 3cm 到壁顶 */
-    const wallY = (RAIL_WALLTOP + (-RAIL_FLOOR - 0.03)) / 2;
+    /* U 形槽一体成型：底板+两侧低壁（+闭端帽）是一根连续挤出的实体，
+       没有任何拼接缝——旧方案底/壁/端板三块透明盒互相重叠，透射光叠出凌乱的亮缝 */
+    const W2 = RAIL_W + 0.011, T = 0.022;
+    const uProfile = new THREE.Shape();
+    uProfile.moveTo(-W2, -RAIL_FLOOR - 0.025);
+    uProfile.lineTo(W2, -RAIL_FLOOR - 0.025);
+    uProfile.lineTo(W2, RAIL_WALLTOP);
+    uProfile.lineTo(W2 - T, RAIL_WALLTOP);
+    uProfile.lineTo(W2 - T, -RAIL_FLOOR);
+    uProfile.lineTo(-W2 + T, -RAIL_FLOOR);
+    uProfile.lineTo(-W2 + T, RAIL_WALLTOP);
+    uProfile.lineTo(-W2, RAIL_WALLTOP);
+    uProfile.closePath();
+    function uSlotGeo(len, capA, capB) {
+      const geo = new THREE.ExtrudeGeometry(uProfile, { depth: len, bevelEnabled: false, steps: 1 });
+      const pos = geo.attributes.position, nor = geo.attributes.normal;
+      const P = [], N = [];
+      for (let i = 0; i < pos.count; i += 3) {
+        const z0 = pos.getZ(i), z1 = pos.getZ(i + 1), z2 = pos.getZ(i + 2);
+        const atA = Math.abs(z0) < 1e-5 && Math.abs(z1) < 1e-5 && Math.abs(z2) < 1e-5;
+        const atB = Math.abs(z0 - len) < 1e-5 && Math.abs(z1 - len) < 1e-5 && Math.abs(z2 - len) < 1e-5;
+        if ((atA && !capA) || (atB && !capB)) continue;   /* 开口端不封帽 */
+        for (let k = 0; k < 3; k++) {
+          P.push(pos.getX(i + k), pos.getY(i + k), pos.getZ(i + k));
+          N.push(nor.getX(i + k), nor.getY(i + k), nor.getZ(i + k));
+        }
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3));
+      return g;
+    }
+    let prevH = null;   /* 上一段的水平走向 = 球进洞的来向（限位挡圈朝它留口） */
+    /* 同一条滑槽的共线段合并成一根整体挤出体（每条滑槽各自一体成型，中间零接缝） */
+    let rail = null;    /* {A, dir, len, capA, capB, end} */
+    function flushRail() {
+      if (!rail) return;
+      const mesh = new THREE.Mesh(uSlotGeo(rail.len, rail.capA, rail.capB), railMat);
+      mesh.position.copy(rail.A);
+      mesh.quaternion.setFromRotationMatrix(
+        new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(rail.up, rail.dir), rail.up, rail.dir));
+      mesh.renderOrder = 7; scene.add(mesh);
+      rail = null;
+    }
     for (const [a, c, openA, openB] of RAIL_SEGS) {
       const A = new THREE.Vector3(cx + a[0], a[1], cz + a[2]);
       const B = new THREE.Vector3(cx + c[0], c[1], cz + c[2]);
@@ -543,42 +584,57 @@ function buildMachine(cfg) {
         new THREE.Matrix4().makeBasis(dir, up, side));
 
       if (vertical) {
-        /* 竖直孔段 = 层间落球洞：就是物理孔壁本身（整圈亚克力管，半径=物理膛 RAIL_R），
-           不加任何专门画的圈——球从第一层末端滚进这个洞，垂直掉到第二层槽里 */
+        /* 竖直孔段 = 层间落球洞：孔壁就是物理膛本身。
+           注意圆柱轴必须对齐段方向——直接 copy 槽体四元数会退化（竖直段的 up 落到 Z 轴），
+           孔壁整个横躺成「横向的环」。 */
         const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.004, 28, 1, true);
         const mesh = new THREE.Mesh(geo, railMat);
-        mesh.position.copy(mid); mesh.quaternion.copy(q);
+        mesh.position.copy(mid);
+        mesh.quaternion.setFromUnitVectors(_Y, dir);
         mesh.renderOrder = 7; scene.add(mesh);
+        /* 孔口限位边：在孔口「来球方向的对面」立一段矮挡圈（物理里有同一条约束），
+           球冲过头撞上它就被挡回孔口，顺着洞掉下去，不会从孔沿溜过去 */
+        if (prevH) {
+          /* 限位边与孔壁一体：同轴同半径套在孔口上段（覆盖物理约束带 wT -2cm..+7cm），
+             下端与孔壁重叠 5cm、上端只高出孔口 2cm——看起来就是孔管自身翻出的半圈厚边，
+             不是贴上去的独立挡板。开口朝来球方向（球从这里滚进洞） */
+          const ang = Math.atan2(prevH.x, prevH.z);   /* CylinderGeometry: theta=0 指向 +Z */
+          const lip = new THREE.Mesh(
+            new THREE.CylinderGeometry(RAIL_R + 0.004, RAIL_R + 0.004, 0.09, 28, 1, true,
+              ang - Math.PI * 0.42, Math.PI * 0.84), railMat);
+          lip.position.copy(A).addScaledVector(_Y, -0.025);
+          lip.renderOrder = 7; scene.add(lip);
+        }
       } else {
-        /* 槽底板 */
-        const floor = new THREE.Mesh(new THREE.BoxGeometry(len + 0.012, 0.025, RAIL_W * 2 + 0.05), railMat);
-        floor.position.copy(mid).addScaledVector(up, -RAIL_FLOOR - 0.0125);
-        floor.quaternion.copy(q); floor.renderOrder = 7; scene.add(floor);
-        /* 两侧低壁（亚克力本色，不加描边） */
-        for (const sgn of [1, -1]) {
-          const wall = new THREE.Mesh(new THREE.BoxGeometry(len + 0.012, wallH, 0.022), railMat);
-          wall.position.copy(mid).addScaledVector(up, wallY).addScaledVector(side, sgn * (RAIL_W + 0.011));
-          wall.quaternion.copy(q); wall.renderOrder = 7; scene.add(wall);
+        /* 共线续接：下一段从上一根的末端、同方向继续 → 并入同一根整体挤出体 */
+        const colinear = rail
+          && rail.end.distanceTo(A) < 1e-4
+          && rail.dir.dot(dir) > 0.999;
+        if (colinear) {
+          rail.len += len; rail.capB = !openB; rail.end = B.clone();
+        } else {
+          flushRail();
+          rail = { A: A.clone(), dir: dir.clone(), up: up.clone(), len, capA: !openA, capB: !openB, end: B.clone() };
         }
       }
-      /* 端板：物理闭端才画（U 形槽用方板，圆管段用圆板）；方板与低壁同底同顶 */
-      for (const [P, n, closed] of [[A, dir.clone().negate(), !openA], [B, dir.clone(), !openB]]) {
-        if (!closed) continue;
-        const plate = vertical
-          ? new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), railMat)
-          : new THREE.Mesh(new THREE.BoxGeometry(0.025, wallH, RAIL_W * 2 + 0.05), railMat);
-        plate.position.copy(P);
-        if (!vertical) plate.position.addScaledVector(up, wallY);
-        plate.quaternion.setFromUnitVectors(_Y, n);
-        plate.renderOrder = 7; scene.add(plate);
+      if (!vertical) { prevH = new THREE.Vector3(dir.x, 0, dir.z); if (prevH.lengthSq() > 1e-8) prevH.normalize(); }
+      if (vertical) {
+        /* 竖直段打断滑槽合并（洞是独立一件）；闭端才补圆端板（当前竖直段两端都开，一般不触发） */
+        flushRail();
+        for (const [P, closed] of [[A, !openA], [B, !openB]]) {
+          if (!closed) continue;
+          const plate = new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), railMat);
+          plate.position.copy(P);
+          plate.quaternion.setFromUnitVectors(_Y, dir);
+          plate.renderOrder = 7; scene.add(plate);
+        }
       }
     }
-    /* 左端挡块：与侧壁同高（球露出，不被大板挡住） */
-    const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
-    const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, wallH, RAIL_W * 2 + 0.05), railMat);
-    stopPlate.position.set(stopX + 0.055, stopY + wallY, stopZ); stopPlate.renderOrder = 7; scene.add(stopPlate);
+    flushRail();
+    /* 左端挡块 = 最后一段的闭端端板（上面已画），不再单独放一块外漂的板 */
     /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
     const postY0 = 0.62;
+    const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
     for (const [px, py, pz] of [
       [cx + UPPER_PTS[0][0], UPPER_PTS[0][1], cz + UPPER_PTS[0][2]],   /* 上层槽起点（避让落球洞） */
       [cx + LOWER_PTS[1][0], LOWER_PTS[1][1], cz + LOWER_PTS[1][2]],   /* 下层槽中段 */
@@ -763,6 +819,7 @@ function stepInBall(b, m, dt) {
    与视觉上开的那条槽口完全对应。 */
 const _sv = new THREE.Vector3();
 function railWallCollide(b, m, dt) {
+  let prevH = null;   /* 上一段的水平走向 = 球进洞的来向 */
   for (const [a, c, openA, openB] of RAIL_SEGS) {
     const ax = m.cx + a[0], ay = a[1], az = m.cz + a[2];
     const dx = m.cx + c[0] - ax, dy = c[1] - ay, dz = m.cz + c[2] - az;
@@ -774,6 +831,19 @@ function railWallCollide(b, m, dt) {
     const relx = b.p.x - (ax + dx * rawT), rely = b.p.y - (ay + dy * rawT), relz = b.p.z - (az + dz * rawT);
     const d = Math.hypot(relx, rely, relz);
     if (Math.abs(uy) > 0.7) {
+      /* ---- 孔口限位边：孔口背侧一段矮挡圈（与视觉那段圆弧同一条约束）。
+              球冲过孔心、横向还在孔口范围内时被挡回孔口，顺着洞掉下去，不会从孔沿溜过去 ---- */
+      if (prevH && wT > -0.02 && wT < 0.07) {
+        const along = relx * prevH.x + relz * prevH.z;         /* 沿来球方向的水平偏移 */
+        const latd = Math.abs(-relx * prevH.z + relz * prevH.x);
+        const lim = RAIL_R - R_BALL;                            /* 球心最远到孔壁前一个球径 */
+        if (along > lim && latd < RAIL_R * 0.95) {
+          b.p.x += (lim - along) * prevH.x;
+          b.p.z += (lim - along) * prevH.z;
+          const vh = b.v.x * prevH.x + b.v.z * prevH.z;
+          if (vh > 0) { b.v.x -= 1.05 * vh * prevH.x; b.v.z -= 1.05 * vh * prevH.z; }
+        }
+      }
       /* ---- 竖直孔/管段：圆管膛，球心约束在轴 3.5cm 内自由下落（仅段内，无限圆柱会把球钉在半空）。
               洞顶前 4cm 是「喇叭口」：球从上层斜着冲进洞口时，球心还在洞外，不能被孔壁顶回去 ---- */
       if (wT > R_BALL * 0.45 && wT < L + 0.02 && d < RAIL_R && d > 1e-6) {
@@ -870,6 +940,10 @@ function railWallCollide(b, m, dt) {
         const vn = b.v.x * end[3] + b.v.y * end[4] + b.v.z * end[5];
         if (vn > 0) { b.v.x -= (1 + 0.15) * vn * end[3]; b.v.y -= (1 + 0.15) * vn * end[4]; b.v.z -= (1 + 0.15) * vn * end[5]; }
       }
+    }
+    if (Math.abs(uy) <= 0.7) {
+      const hx = dx, hz = dz, hl = Math.hypot(hx, hz) || 1;
+      prevH = { x: hx / hl, z: hz / hl };
     }
   }
 }

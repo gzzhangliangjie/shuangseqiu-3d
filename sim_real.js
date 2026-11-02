@@ -173,6 +173,7 @@ function stepInBall(b,m,dt){
 /* 管壁碰撞（全 3D）：球心在管膛内才参与；侧壁=轴心距限位+反弹+滚动阻力；
    闭式端=端板（球心停在板前 R_BALL），开式端=洞（自由穿过） */
 function railWallCollide(b,m,dt){
+  let prevH=null;   /* 上一段的水平走向 = 球进洞的来向 */
   for(const [a,c,openA,openB] of RAIL_SEGS){
     const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
     const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;
@@ -184,6 +185,17 @@ function railWallCollide(b,m,dt){
     const relx=b.p[0]-(ax+dx*rawT), rely=b.p[1]-(ay+dy*rawT), relz=b.p[2]-(az+dz*rawT);
     const d=Math.hypot(relx,rely,relz);
     if(Math.abs(uy)>0.7){
+      /* 孔口限位边：孔口背侧矮挡圈（与视觉同一条）。球冲过孔心、横向仍在孔口范围内时被挡回孔口 */
+      if(prevH&&wT>-0.02&&wT<0.07){
+        const along=relx*prevH.x+relz*prevH.z;
+        const latd=Math.abs(-relx*prevH.z+relz*prevH.x);
+        const lim=TUBE_BORE-R_BALL;   /* 孔壁前一个球径（TUBE_BORE = 孔内半径） */
+        if(along>lim&&latd<TUBE_BORE*0.95){
+          b.p[0]+=(lim-along)*prevH.x; b.p[2]+=(lim-along)*prevH.z;
+          const vh=b.v[0]*prevH.x+b.v[2]*prevH.z;
+          if(vh>0){ b.v[0]-=1.05*vh*prevH.x; b.v[2]-=1.05*vh*prevH.z; }
+        }
+      }
       /* 竖直孔/管段：圆管膛。洞顶前 4cm 为喇叭口——球斜着冲进洞口时球心还在洞外，不能被孔壁顶回 */
       if(wT>R_BALL*0.45&&wT<L+0.02&&d<TUBE_BORE&&d>1e-6&&d>TUBE_IN-0.002){
         if(d>TUBE_IN){
@@ -282,6 +294,10 @@ function railWallCollide(b,m,dt){
           }
         }
       }
+    if(Math.abs(uy)<=0.7){
+      const hl=Math.hypot(dx,dz)||1;
+      prevH={x:dx/hl, z:dz/hl};
+    }
   }
 }
 
