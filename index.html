@@ -401,12 +401,13 @@ function buildMachine(cfg) {
     }
     /* 闸门挡板（参考图）：水平托板贴在管底斜切口下方，摇奖前托住整排管里的球，
        开始摇奖时向下抽开松球；挡板从后方托住整排管子 */
-    const gateY = byMin - 0.04;
+    const gateY = byMin + 0.098;                     /* 托板顶面贴球底（球底 = byMin + 0.12） */
+    const gateZ = cz - rt * 0.66;
     const chord = 2 * rt * Math.sin((N - 1) / 2 * step) + 0.35;
     const plate = new THREE.Mesh(new THREE.BoxGeometry(chord, 0.045, 0.8), acrylicMat);
-    plate.position.set(cx, gateY, cz - rt * 0.66);
+    plate.position.set(cx, gateY, gateZ);
     plate.renderOrder = 7; scene.add(plate);
-    var gatePlate = plate, gateBaseY = gateY;
+    var gatePlate = plate, gateBaseZ = gateZ;
   }
 
   /* ---- ③ 出球滑道（DESIGN.md §4 + 用户箭头图 + BV1wb4y1f7Hu 实拍）：
@@ -427,7 +428,7 @@ function buildMachine(cfg) {
 
   /* ---- 球：初始停在预览架竖管内（管内可叠多颗） ---- */
   const m = {
-    ...cfg, discSpins, valvePivot, rackDefs, railCurve, railLen, gatePlate, gateY: gateBaseY,
+    ...cfg, discSpins, valvePivot, rackDefs, railCurve, railLen, gatePlate, gateZ0: gateBaseZ,
     balls: [], agit: 0, agitTarget: 0,
     loadOpen: false, holeOpen: false,
     cosExit, exitDirW: cfg.exitDir.clone(),
@@ -670,8 +671,8 @@ function onBallPlaced(b, m) {
 function updateMachine(m, dt) {
   m.timer += dt;
   if (m.phase === 'loading') {
-    /* 抽出闸门挡板：向下滑开 0.5s，然后松球 */
-    if (m.gatePlate) m.gatePlate.position.y = m.gateY - Math.min(1, m.timer / 0.5) * 0.55;
+    /* 抽出闸门挡板：向后（-Z）抽开 0.5s，然后松球 */
+    if (m.gatePlate) m.gatePlate.position.z = m.gateZ0 - Math.min(1, m.timer / 0.5) * 0.85;
     if (m.timer > 0.8 && !m.loadOpen) {
       m.loadOpen = true;                     /* 挡板已抽开：管内球沿管滑落进球壳 */
       for (const b of m.balls) { b.state = 'in'; b.vsT = 0; b.v.set(0, 0, 0); }
@@ -778,7 +779,7 @@ function resetAll() {
     m.loadOpen = false; m.holeOpen = false;
     m.capturedBall = null; m.doneCount = 0; m.timer = 0;
     m.valvePivot.rotation.x = 0;
-    if (m.gatePlate) m.gatePlate.position.y = m.gateY;
+    if (m.gatePlate) m.gatePlate.position.z = m.gateZ0;
     m.drawsLeft = m.key === 'red' ? 6 : 1;
     for (const b of m.balls) {
       b.p.copy(b.home);
