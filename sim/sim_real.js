@@ -5,16 +5,16 @@
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const RAIL_PTS = [
-  [0.00, 2.85, 0.64], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.97, 0.60], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
-    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.84, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+    inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
-    inletHalf:50*Math.PI/180, exitHalf:9*Math.PI/180, exitDir:[0,-0.826,0.564],
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.84, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+    inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 
@@ -102,6 +102,7 @@ function stepInBall(b,m,dt){
       if(w!==0){
         const sp=w*m.agit*Math.min(rr,m.rOuter);
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
+        if(rr>m.gapInner&&rr<m.rOuter){ v[0]+=dx/(rr+1e-4)*1.6*m.agit*dt; v[2]+=dz/(rr+1e-4)*1.6*m.agit*dt; }
         if(p[1]<m.discY+0.34&&p[1]>m.discY-0.16&&Math.random()<0.06) v[1]+=3.2*m.agit*dt*(0.5+Math.random());
       }
     }
@@ -120,7 +121,7 @@ function stepInBall(b,m,dt){
   // 转子顶面支撑：出球孔正上方留缺口
   const floorC=m.discY+0.05+R_BALL;
   const prr=Math.hypot(p[0]-m.cx,p[2]-m.cz);
-  const maxR=Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2))+0.02;
+  const maxR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2)), m.rOuter+0.03);
   if(p[1]<floorC){ p[1]=floorC;
     if(prr>maxR){ const k=maxR/prr; p[0]=m.cx+(p[0]-m.cx)*k; p[2]=m.cz+(p[2]-m.cz)*k; }
     if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
@@ -133,16 +134,20 @@ function stepInBall(b,m,dt){
     if(rho>maxRho&&rho>0.05){ v[0]-=dx/rho*30*dt; v[2]-=dz/rho*30*dt; }
   }
 
-  // 完整球壳约束：仅出球孔可穿
+  // 出球捕获：独立于球壳约束 —— 开阀窗口内球到达孔口锥区并越过捕获深度即入滑道
   const rx=p[0]-m.cx, ry=p[1]-m.cy, rz=p[2]-m.cz;
   const d=Math.hypot(rx,ry,rz);
-  if(d>m.R-R_BALL){
+  if(m.holeOpen&&!m.captured&&d>1e-6){
     const nx=rx/d,ny=ry/d,nz=rz/d;
-    const inExit=m.holeOpen&&(nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit;
-    if(inExit&&d>m.R-R_BALL*1.2&&!m.captured){
+    if((nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit&&d>m.R-R_BALL*1.6){
       b.state='rail'; b.placed=false; b.s=0; b.vs=2.0; m.captured=b; m.holeOpen=false;
       return;
     }
+  }
+  // 完整球壳约束：仅出球孔可穿
+  if(d>m.R-R_BALL){
+    const nx=rx/d,ny=ry/d,nz=rz/d;
+    const inExit=m.holeOpen&&(nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit;
     if(!inExit){
       const push=m.R-R_BALL;
       p[0]=m.cx+nx*push; p[1]=m.cy+ny*push; p[2]=m.cz+nz*push;
@@ -239,6 +244,14 @@ function runMachine(m, log){
     collideGroup(m.balls.filter(b=>b.state==='in'&&!b.tube));
     collideTubes(m);
     collideRail(m.balls.filter(b=>b.state==='rail'),m);
+    const fl=m.discY+0.05+R_BALL;
+    const mR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-fl)**2)), m.rOuter+0.03);
+    for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
+      if(b.p[1]<fl){
+        const bx=b.p[0]-m.cx,bz=b.p[2]-m.cz,br=Math.hypot(bx,bz);
+        if(br>mR){ const k=mR/br; b.p[0]=m.cx+bx*k; b.p[2]=m.cz+bz*k; }
+      }
+    }
     if(placedCount>=m.draws) break;
   }
   if(placedCount<m.draws){ log(`${m.key}: FAIL 只出球 ${placedCount}/${m.draws} (t=${t.toFixed(1)}s)`); return false; }

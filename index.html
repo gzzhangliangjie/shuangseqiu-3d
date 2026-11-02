@@ -186,7 +186,7 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
 const RAIL_PTS = [   /* 相对机器中心 (cx,cz)：出球孔下 → 右行 → 右端下行 → 左行到取球位 */
-  [0.00, 2.85, 0.64], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.97, 0.60], [0.00, 2.62, 0.98], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
@@ -199,7 +199,7 @@ const MACH_CFG = [
     key: 'red', cx: -3.8, cz: 0, count: 33, color: '#d0342c', label: '1 号机 · 红球区',
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
-    exitHalf: 9 * Math.PI / 180,             /* 底部小孔：孔径≈1.15×球径，只允许一球通过 */
+    exitHalf: 12 * Math.PI / 180,            /* 底部小孔：孔径≈1.5×球径，只允许一球通过 */
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
@@ -212,7 +212,7 @@ const MACH_CFG = [
     key: 'blue', cx: 3.8, cz: 0, count: 16, color: '#1e63c8', label: '2 号机 · 蓝球区',
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
-    exitHalf: 9 * Math.PI / 180,
+    exitHalf: 12 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),
     discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
@@ -347,11 +347,15 @@ function buildMachine(cfg) {
   inner.position.set(cx, rotorY, cz); scene.add(inner);
   const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), acrylicMat);
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
-  for (let k = 0; k < 3; k++) {
-    const hold = new THREE.Group(); hold.rotation.y = k / 3 * Math.PI * 2 + 0.5;
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.055, 20, 12), acrylicMat);
-    dome.position.set(cfg.rHub * 0.6, 0.055, 0); dome.scale.y = 0.8; dome.renderOrder = 6;
-    hold.add(dome); inner.add(hold);
+  /* 拨块：铬金属梯形块（真机渲染图形态），内圈 4 小块 */
+  const wedgeIn = new THREE.CylinderGeometry(0.042, 0.075, 0.08, 4, 1);
+  wedgeIn.rotateY(Math.PI / 4);
+  for (let k = 0; k < 4; k++) {
+    const hold = new THREE.Group(); hold.rotation.y = k / 4 * Math.PI * 2 + 0.4;
+    const blk = new THREE.Mesh(wedgeIn, acrylicMat);
+    blk.scale.x = 1.35;
+    blk.position.set(cfg.rHub * 0.62, 0.09, 0); blk.renderOrder = 6;
+    hold.add(blk); inner.add(hold);
   }
   discSpins.push(inner);
   /* 外环带（gapInner → rOuter，外缘紧贴球壁 —— 真机形态，周围不多一圈）。
@@ -365,11 +369,15 @@ function buildMachine(cfg) {
   ringGeo.rotateX(-Math.PI / 2);
   const ring = new THREE.Mesh(ringGeo, acrylicMat);
   ring.renderOrder = 6; outer.add(ring);
+  /* 外圈 6 大块，同样铬金属 */
+  const wedgeOut = new THREE.CylinderGeometry(0.06, 0.105, 0.10, 4, 1);
+  wedgeOut.rotateY(Math.PI / 4);
   for (let k = 0; k < 6; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.05, 20, 12), acrylicMat);
-    dome.position.set(cfg.gapInner + 0.05, 0.055, 0); dome.scale.y = 0.8; dome.renderOrder = 6;
-    hold.add(dome); outer.add(hold);
+    const blk = new THREE.Mesh(wedgeOut, acrylicMat);
+    blk.scale.x = 1.3;
+    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.10, 0); blk.renderOrder = 6;
+    hold.add(blk); outer.add(hold);
   }
   discSpins.push(outer);
 
@@ -513,6 +521,11 @@ function stepInBall(b, m, dt) {
         const sp = w * m.agit * Math.min(rr, m.rOuter);
         v.x += -dz / (rr + 1e-4) * sp * dt;
         v.z += dx / (rr + 1e-4) * sp * dt;
+        if (rr > m.gapInner && rr < m.rOuter) {
+          /* 拨凸把球往外缘带（真实拨料方向），球更快翻到轮缘和出口区 */
+          v.x += dx / (rr + 1e-4) * 1.6 * m.agit * dt;
+          v.z += dz / (rr + 1e-4) * 1.6 * m.agit * dt;
+        }
         if (p.y < m.discY + 0.34 && p.y > m.discY - 0.16 && Math.random() < 0.06) {
           v.y += 3.2 * m.agit * dt * (0.5 + Math.random());
         }
@@ -538,7 +551,7 @@ function stepInBall(b, m, dt) {
   /* 转子顶面支撑：支撑范围=盘面高度球壳内可达的最大水平半径（贴壁），球不会漏也不会悬空 */
   const floorC = m.discY + 0.05 + R_BALL;
   const prr = Math.hypot(p.x - m.cx, p.z - m.cz);
-  const maxR = Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - floorC) ** 2)) + 0.02;
+  const maxR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - floorC) ** 2)), m.rOuter + 0.03);
   if (p.y < floorC) {
     p.y = floorC;
     if (prr > maxR) {
@@ -563,10 +576,10 @@ function stepInBall(b, m, dt) {
   /* 搅拌室玻璃约束：顶部入球口 / 下前方出球口可穿 */
   _rel.subVectors(p, _t.set(m.cx, m.cy, m.cz));
   const d = _rel.length();
-  if (d > m.R - R_BALL) {
+  /* 出球捕获：独立于玻璃约束 —— 开阀窗口内球到达孔口锥区并越过捕获深度（转轮前缘）即入滑道 */
+  if (m.holeOpen && !m.capturedBall && d > 1e-6) {
     _n.copy(_rel).divideScalar(d);
-    const inExit = m.holeOpen && _n.dot(m.exitDirW) > m.cosExit;
-    if (inExit && d > m.R - R_BALL * 1.2 && !m.capturedBall) {
+    if (_n.dot(m.exitDirW) > m.cosExit && d > m.R - R_BALL * 1.6) {
       b.state = 'rail'; b.placed = false;
       b.s = 0; b.vs = 2.0;                       /* 进入滑道起点（竖井口） */
       m.capturedBall = b;
@@ -574,6 +587,10 @@ function stepInBall(b, m, dt) {
       /* 已出的球留在滑道里排队（摇完后实体球排成一行 = 开奖结果） */
       return;
     }
+  }
+  if (d > m.R - R_BALL) {
+    _n.copy(_rel).divideScalar(d);
+    const inExit = m.holeOpen && _n.dot(m.exitDirW) > m.cosExit;
     if (!inExit) {
       p.copy(_t).addScaledVector(_n, m.R - R_BALL);
       const vn = v.dot(_n);
@@ -769,6 +786,20 @@ function updateMachine(m, dt) {
     collideGroup(inBalls);
     collideTubes(m);
     collideRail(railBalls, m);
+    /* 护城河清扫：碰撞把球挤到轮缘外的话，收回转轮支撑圈（球始终落在转轮上） */
+    {
+      const fl = m.discY + 0.05 + R_BALL;
+      const mR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - fl) ** 2)), m.rOuter + 0.03);
+      for (const b of inBalls) {
+        if (b.p.y < fl) {
+          const bx = b.p.x - m.cx, bz = b.p.z - m.cz, br = Math.hypot(bx, bz);
+          if (br > mR) {
+            const k = mR / br;
+            b.p.x = m.cx + bx * k; b.p.z = m.cz + bz * k;
+          }
+        }
+      }
+    }
     m.acc -= DT; sub++;
   }
   if (m.acc > DT * 8) m.acc = 0;   /* 卡顿后丢弃积压，避免爆炸 */
