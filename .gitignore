@@ -18,3 +18,4 @@ _vendor/
 _ref_tmp/
 .edge_tmp/
 e2e_*.png
+_probe_*.html

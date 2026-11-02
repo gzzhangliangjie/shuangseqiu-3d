@@ -5,18 +5,18 @@
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
 const RAIL_PTS = [
-  [0.00, 2.66, 0.58], [0.00, 2.64, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.72, 0.66], [0.00, 2.70, 1.00], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:3.05, rHub:0.34, gapInner:0.44, rOuter:0.82, wInner:4.5, wOuter:-2.8,
-    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.9,0.436],
-    holeUX:0.0, holeUZ:0.40,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.74, discY:3.05, rHub:0.20, gapInner:0.25, rOuter:0.85, wInner:4.5, wOuter:-2.8,
+    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.85,0.527],
+    holeUX:0.0, holeUZ:0.62,
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:3.05, rHub:0.34, gapInner:0.44, rOuter:0.82, wInner:4.5, wOuter:-2.8,
-    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.9,0.436],
-    holeUX:0.0, holeUZ:0.40,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.74, discY:3.05, rHub:0.20, gapInner:0.25, rOuter:0.85, wInner:4.5, wOuter:-2.8,
+    inletHalf:50*Math.PI/180, exitHalf:5.5*Math.PI/180, exitDir:[0,-0.85,0.527],
+    holeUX:0.0, holeUZ:0.62,
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
 

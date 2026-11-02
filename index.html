@@ -186,7 +186,7 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
 const RAIL_PTS = [   /* 相对机器中心 (cx,cz)：出球孔下 → 右行 → 右端下行 → 左行到取球位 */
-  [0.00, 2.66, 0.58], [0.00, 2.64, 0.98], [0.98, 2.63, 0.98],
+  [0.00, 2.72, 0.66], [0.00, 2.70, 1.00], [0.98, 2.63, 0.98],
   [1.22, 2.60, 0.60], [0.00, 2.62, 0.52], [-1.10, 2.61, 0.52],
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
@@ -200,11 +200,11 @@ const MACH_CFG = [
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 5.5 * Math.PI / 180,             /* 底部小孔：孔径≈1.15×球径，只允许一球通过 */
-    exitDir: new THREE.Vector3(0, -0.9, 0.436).normalize(),
-    holeUX: 0.0, holeUZ: 0.50,                 /* 孔口在盘面上的水平投影（相对机器中心） */
-    /* 搅拌器（专利 US6145836 + 视频截图）：内盘 3 块 + 外环带 6 块方形拨块，反向不同速。
-       尺寸受球壳约束：盘面高度处球壳水平半径 = √(R²-(cy-discY)²) ≈ 0.88，外缘必须留缝在玻璃内 */
-    discY: 3.05, rHub: 0.34, gapInner: 0.44, rOuter: 0.82, wInner: 4.5, wOuter: -2.8,
+    exitDir: new THREE.Vector3(0, -0.85, 0.527).normalize(),   /* 孔口水平半径≈0.62，在轮盘之外 */
+    holeUX: 0.0, holeUZ: 0.62,                 /* 孔口在盘面上的水平投影（相对机器中心） */
+    /* 搅拌器（专利 + 真机渲染图）：轮盘很小，放在大托盘上；内盘 3 个半球凸起 / 外环带 6 个，
+       反向不同速；托盘下面鼓形托壳里藏电机，外面只看到透明鼓身 */
+    discY: 3.05, rHub: 0.20, gapInner: 0.25, rOuter: 0.85, wInner: 4.5, wOuter: -2.8,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -214,9 +214,9 @@ const MACH_CFG = [
     R: 1.18, cy: 3.84,
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 5.5 * Math.PI / 180,
-    exitDir: new THREE.Vector3(0, -0.9, 0.436).normalize(),
-    holeUX: 0.0, holeUZ: 0.50,
-    discY: 3.05, rHub: 0.34, gapInner: 0.44, rOuter: 0.82, wInner: 4.5, wOuter: -2.8,
+    exitDir: new THREE.Vector3(0, -0.85, 0.527).normalize(),
+    holeUX: 0.0, holeUZ: 0.62,
+    discY: 3.05, rHub: 0.20, gapInner: 0.25, rOuter: 0.85, wInner: 4.5, wOuter: -2.8,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -321,44 +321,74 @@ function buildMachine(cfg) {
   valve.position.y = 0.02; valve.renderOrder = 6; valvePivot.add(valve);
   scene.add(valvePivot);
 
-  /* ---- 搅拌室底部：水平同轴双转子（专利 US6145836 + 视频截图）：
-          内盘 3 块方形拨块 + 外环带 6 块方形拨块，两区之间留环形刻缝，反向不同速。
-          整套搅拌机构全透明有机玻璃，仅转轴用银色金属 ---- */
+  /* ---- 搅拌室底部（对照真机渲染图）：大托盘 + 托盘上的小型双转子 + 鼓形托壳藏电机。
+          球坐在托盘上；内盘/外环带尺寸很小（Ø0.40 / Ø0.90，球径 Ø2.36），
+          反向不同速，凸起为半球拨凸；除电机/转轴外全透明有机玻璃 ---- */
   const discSpins = [];
   const rotorY = cfg.discY;
   const brightMetal = new THREE.MeshStandardMaterial({ color: 0xdde4f5, metalness: 0.9, roughness: 0.28, envMapIntensity: 1.2 });
-  /* 内盘（r ≤ rHub，3 块拨块） */
+  /* 静态托盘（球的支撑面；出球口处开一个只容单球的圆孔，与玻璃球孔对齐） */
+  {
+    const trayShape = new THREE.Shape(); trayShape.absarc(0, 0, 0.86, 0, Math.PI * 2);
+    const trayHole = new THREE.Path(); trayHole.absarc(cfg.holeUX, -cfg.holeUZ, 0.16, 0, Math.PI * 2);
+    trayShape.holes.push(trayHole);
+    const trayGeo = new THREE.ExtrudeGeometry(trayShape, { depth: 0.04, bevelEnabled: false, curveSegments: 48 });
+    trayGeo.rotateX(-Math.PI / 2);
+    const tray = new THREE.Mesh(trayGeo, acrylicMat);
+    tray.position.set(cx, rotorY + 0.01, cz); tray.renderOrder = 6; scene.add(tray);
+  }
+  /* 鼓形托壳 + 藏在里面的电机与转轴（参考图：外面只看到透明鼓身） */
+  {
+    const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.50, 0.50, 0.24, 32, 1, true), acrylicMat);
+    drum.position.set(cx, rotorY - 0.11, cz); drum.renderOrder = 6; scene.add(drum);
+    const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.14, 24), brightMetal);
+    motor.position.set(cx, rotorY - 0.15, cz); scene.add(motor);
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.10, 10), brightMetal);
+    shaft.position.set(cx, rotorY - 0.05, cz); scene.add(shaft);
+  }
+  /* 内盘（r ≤ rHub，3 个半球拨凸） */
   const inner = new THREE.Group();
   inner.position.set(cx, rotorY, cz); scene.add(inner);
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 40), acrylicMat);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), acrylicMat);
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
   for (let k = 0; k < 3; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 3 * Math.PI * 2 + 0.5;
-    const block = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.20, 0.10), acrylicMat);
-    block.position.set(cfg.rHub * 0.62, 0.12, 0); block.renderOrder = 6;
-    hold.add(block); inner.add(hold);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.055, 20, 12), acrylicMat);
+    dome.position.set(cfg.rHub * 0.6, 0.05, 0); dome.scale.y = 0.75; dome.renderOrder = 6;
+    hold.add(dome); inner.add(hold);
   }
   discSpins.push(inner);
-  /* 外环带（gapInner → rOuter，6 块拨块；与内盘之间是可见的环形刻缝） */
+  /* 外环带（gapInner → rOuter，外缘几乎贴住球壁，球全部坐在转轮上）。
+     出球口处环带开一个圆槽（转环永远避开出球孔），槽内嵌托盘上的静止垫圈，
+     垫圈中间就是出球孔 —— 球滚上垫圈即从孔落出 */
   const outer = new THREE.Group();
   outer.position.set(cx, rotorY, cz); scene.add(outer);
   const ringShape = new THREE.Shape(); ringShape.absarc(0, 0, cfg.rOuter, 0, Math.PI * 2);
   const ringHole = new THREE.Path(); ringHole.absarc(0, 0, cfg.gapInner, 0, Math.PI * 2);
   ringShape.holes.push(ringHole);
+  const isleHole = new THREE.Path(); isleHole.absarc(cfg.holeUX, -cfg.holeUZ, 0.20, 0, Math.PI * 2);
+  ringShape.holes.push(isleHole);
   const ringGeo = new THREE.ExtrudeGeometry(ringShape, { depth: 0.05, bevelEnabled: false, curveSegments: 48 });
   ringGeo.rotateX(-Math.PI / 2);
   const ring = new THREE.Mesh(ringGeo, acrylicMat);
   ring.renderOrder = 6; outer.add(ring);
   for (let k = 0; k < 6; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
-    const block = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.20, 0.13), acrylicMat);
-    block.position.set((cfg.gapInner + cfg.rOuter) / 2, 0.12, 0); block.renderOrder = 6;
-    hold.add(block); outer.add(hold);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.05, 20, 12), acrylicMat);
+    dome.position.set(cfg.gapInner + 0.08, 0.05, 0); dome.scale.y = 0.75; dome.renderOrder = 6;
+    hold.add(dome); outer.add(hold);
   }
   discSpins.push(outer);
-  /* 传动：中心银色轴（从球底伸上来，完全收在球壳内部） */
-  const axle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.36, 10), brightMetal);
-  axle.position.set(cx, rotorY - 0.18, cz); scene.add(axle);
+  /* 静止垫圈：嵌在环带圆槽内（r 0.16 出球孔 / 外圈 0.20），高度比环带面低一点 */
+  {
+    const padShape = new THREE.Shape(); padShape.absarc(0, 0, 0.20, 0, Math.PI * 2);
+    const padHole = new THREE.Path(); padHole.absarc(0, 0, 0.16, 0, Math.PI * 2);
+    padShape.holes.push(padHole);
+    const padGeo = new THREE.ExtrudeGeometry(padShape, { depth: 0.03, bevelEnabled: false, curveSegments: 32 });
+    padGeo.rotateX(-Math.PI / 2);
+    const pad = new THREE.Mesh(padGeo, acrylicMat);
+    pad.position.set(cx + cfg.holeUX, rotorY + 0.02, cz + cfg.holeUZ); pad.renderOrder = 6; scene.add(pad);
+  }
 
   /* ---- ① 号码球预览架（对照参考图）：等长透明管沿一条弧排成单排（冠形），
           插在球壳正后方，管身微外倾，管底削尖伸入球壳内部；摇奖前球全在管内。
