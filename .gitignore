@@ -16,3 +16,5 @@ _probe.html
 index.html.bak2
 _vendor/
 _ref_tmp/
+.edge_tmp/
+e2e_*.png
