@@ -75,8 +75,8 @@ function makeMachine(cfg){
     exitW:[cfg.cx+cfg.exitDir[0]*cfg.R, cfg.cy+cfg.exitDir[1]*cfg.R, cfg.cz+cfg.exitDir[2]*cfg.R],
     // 拨块：真实物理件（与页面视觉梯形块同尺寸同转速），碰撞实际拨动小球
     pegList:[
-      {r:cfg.rHub*0.62, rp:0.05, w:cfg.wInner, n:4, ph:0.4},
-      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.55, rp:0.06, w:cfg.wOuter, n:6, ph:0},
+      {r:cfg.rHub*0.62, rp:0.055, w:cfg.wInner, n:4, ph:0.4},
+      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.55, rp:0.065, w:cfg.wOuter, n:6, ph:0},
     ],
     rotPhase:[0,0]};
 }
@@ -104,7 +104,7 @@ function stepInBall(b,m,dt){
     // 盘面摩擦拖带（球接触转盘被摩擦带动）；主要搅拌动力来自拨块碰撞
     const dx=p[0]-m.cx, dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
     if(Math.abs(p[1]-m.discY)<0.30){
-      const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter+0.03?m.wOuter:0);
+      const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter?m.wOuter:0);
       if(w!==0){
         const sp=w*m.agit*Math.min(rr,m.rOuter)*0.55;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
@@ -125,7 +125,7 @@ function stepInBall(b,m,dt){
   // 转子顶面支撑：出球孔正上方留缺口
   const floorC=m.discY+0.05+R_BALL;
   const prr=Math.hypot(p[0]-m.cx,p[2]-m.cz);
-  const maxR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2)), m.rOuter+0.03);
+  const maxR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2)), m.rOuter);
   if(p[1]<floorC){ p[1]=floorC;
     if(prr>maxR){ const k=maxR/prr; p[0]=m.cx+(p[0]-m.cx)*k; p[2]=m.cz+(p[2]-m.cz)*k; }
     if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
@@ -259,14 +259,14 @@ function runMachine(m, log){
               const rvx=b.v[0]-svx, rvz=b.v[2]-svz;
               const vn=rvx*nx+rvz*nz;
               if(vn<0){ b.v[0]-=vn*nx*1.2; b.v[2]-=vn*nz*1.2; }
-              b.v[0]+=(svx-b.v[0])*0.3; b.v[2]+=(svz-b.v[2])*0.3;
+              b.v[0]+=(svx-b.v[0])*0.45; b.v[2]+=(svz-b.v[2])*0.45;
             }
           }
         }
       }
     }
     const fl=m.discY+0.05+R_BALL;
-    const mR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-fl)**2)), m.rOuter+0.03);
+    const mR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-fl)**2)), m.rOuter);
     for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
       if(b.p[1]<fl){
         const bx=b.p[0]-m.cx,bz=b.p[2]-m.cz,br=Math.hypot(bx,bz);

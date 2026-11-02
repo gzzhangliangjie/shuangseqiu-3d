@@ -348,12 +348,12 @@ function buildMachine(cfg) {
   const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), acrylicMat);
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
   /* 拨块：铬金属梯形块（真机渲染图形态），内圈 4 小块 */
-  const wedgeIn = new THREE.CylinderGeometry(0.028, 0.048, 0.045, 4, 1);
+  const wedgeIn = new THREE.CylinderGeometry(0.035, 0.060, 0.060, 4, 1);
   wedgeIn.rotateY(Math.PI / 4);
   for (let k = 0; k < 4; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 4 * Math.PI * 2 + 0.4;
     const blk = new THREE.Mesh(wedgeIn, acrylicMat);
-    blk.position.set(cfg.rHub * 0.62, 0.05, 0); blk.renderOrder = 6;
+    blk.position.set(cfg.rHub * 0.62, 0.06, 0); blk.renderOrder = 6;
     hold.add(blk); inner.add(hold);
   }
   discSpins.push(inner);
@@ -369,12 +369,12 @@ function buildMachine(cfg) {
   const ring = new THREE.Mesh(ringGeo, acrylicMat);
   ring.renderOrder = 6; outer.add(ring);
   /* 外圈 6 大块，同样铬金属 */
-  const wedgeOut = new THREE.CylinderGeometry(0.038, 0.06, 0.055, 4, 1);
+  const wedgeOut = new THREE.CylinderGeometry(0.045, 0.070, 0.070, 4, 1);
   wedgeOut.rotateY(Math.PI / 4);
   for (let k = 0; k < 6; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
     const blk = new THREE.Mesh(wedgeOut, acrylicMat);
-    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.055, 0); blk.renderOrder = 6;
+    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.07, 0); blk.renderOrder = 6;
     hold.add(blk); outer.add(hold);
   }
   discSpins.push(outer);
@@ -521,7 +521,7 @@ function stepInBall(b, m, dt) {
     const rr = Math.hypot(dx, dz);
     /* 盘面摩擦拖带（球接触转盘被摩擦带动，物理等效）；主要搅拌动力来自拨块碰撞 */
     if (Math.abs(p.y - m.discY) < 0.30) {
-      const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter + 0.03 ? m.wOuter : 0); /* 含轮缘支撑带，防球卡缘 */
+      const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter ? m.wOuter : 0);
       if (w !== 0) {
         const sp = w * m.agit * Math.min(rr, m.rOuter) * 0.55;
         v.x += -dz / (rr + 1e-4) * sp * dt;
@@ -548,7 +548,7 @@ function stepInBall(b, m, dt) {
   /* 转子顶面支撑：支撑范围=盘面高度球壳内可达的最大水平半径（贴壁），球不会漏也不会悬空 */
   const floorC = m.discY + 0.05 + R_BALL;
   const prr = Math.hypot(p.x - m.cx, p.z - m.cz);
-  const maxR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - floorC) ** 2)), m.rOuter + 0.03);
+  const maxR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - floorC) ** 2)), m.rOuter);
   if (p.y < floorC) {
     p.y = floorC;
     if (prr > maxR) {
@@ -794,7 +794,7 @@ function updateMachine(m, dt) {
     /* 护城河清扫：碰撞把球挤到轮缘外的话，收回转轮支撑圈（球始终落在转轮上） */
     {
       const fl = m.discY + 0.05 + R_BALL;
-      const mR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - fl) ** 2)), m.rOuter + 0.03);
+      const mR = Math.min(Math.sqrt(Math.max(0, (m.R - R_BALL) ** 2 - (m.cy - fl) ** 2)), m.rOuter);
       for (const b of inBalls) {
         if (b.p.y < fl) {
           const bx = b.p.x - m.cx, bz = b.p.z - m.cz, br = Math.hypot(bx, bz);
