@@ -506,11 +506,11 @@ function makeBallMesh(num, color) {
       ctx.fillText(s, 0, 4);
       /* 6/9 区分：6 下方加横线、9 上方加横线（标准防旋转歧义记法） */
       if (s.includes('6') || s.includes('9')) {
-        ctx.strokeStyle = '#151515'; ctx.lineWidth = 5; ctx.lineCap = 'round';
-        const bw = 30;
+        ctx.strokeStyle = '#151515'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+        const bw = 32;
         ctx.beginPath();
-        if (s.includes('6')) { ctx.moveTo(-bw, 32); ctx.lineTo(bw, 32); }   /* 6 → 下划线 */
-        else { ctx.moveTo(-bw, -32); ctx.lineTo(bw, -32); }                   /* 9 → 上划线 */
+        if (s.includes('6')) { ctx.moveTo(-bw, 30); ctx.lineTo(bw, 30); }   /* 6 → 下划线 */
+        else { ctx.moveTo(-bw, -28); ctx.lineTo(bw, -28); }                  /* 9 → 上划线 */
         ctx.stroke();
       }
       ctx.restore();
