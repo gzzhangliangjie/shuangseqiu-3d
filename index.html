@@ -437,34 +437,35 @@ function buildMachine(cfg) {
       cap.rotation.x = -Math.atan(cutH / 2 / cfg.tubeR);
       cap.renderOrder = 7; scene.add(cap);
     }
-    /* 顶部方形盖板（参考图）：水平矩形板盖住整排管口（所有管 by 相同，顶部天然齐平） */
+    /* 顶部盖板（参考图）：扇形环板随管排弧度弯曲（圆心=球心，径向带包住管圈），
+       每个管位开圆洞、管从洞中穿过 */
     {
-      const chord = 2 * rt * Math.sin((N - 1) / 2 * step);
-      const topY = byMin + L;
-      const cover = new THREE.Mesh(new THREE.BoxGeometry(chord + 0.22, 0.035, cfg.tubeR * 2 + 0.16), acrylicMat);
-      cover.position.set(cx, topY + 0.0175, cz - rt);
+      const aH = (N - 1) / 2 * step + 0.20;          /* 板半张角（比管排两端各多出一段） */
+      const cShape = new THREE.Shape();
+      cShape.absarc(0, 0, rt + 0.36, Math.PI / 2 - aH, Math.PI / 2 + aH, false);
+      cShape.absarc(0, 0, rt - 0.36, Math.PI / 2 + aH, Math.PI / 2 - aH, true);
+      cShape.closePath();
+      for (let i = 0; i < N; i++) {
+        const a = (i - (N - 1) / 2) * step;
+        const hole = new THREE.Path();
+        hole.absarc(Math.sin(a) * rt, Math.cos(a) * rt, cfg.tubeR + 0.02, 0, Math.PI * 2, true);
+        cShape.holes.push(hole);
+      }
+      const cGeo = new THREE.ExtrudeGeometry(cShape, { depth: 0.035, bevelEnabled: false, curveSegments: 48 });
+      cGeo.rotateX(-Math.PI / 2);                    /* 竖直成型 → 水平放倒，板顶朝 +Y */
+      const cover = new THREE.Mesh(cGeo, acrylicMat);
+      cover.position.set(cx, byMin + L - 0.005, cz); /* 板底略低于管口，管穿进洞里 */
       cover.renderOrder = 7; scene.add(cover);
     }
-    /* 闸门挡板（参考图）：扇形环板随预览架弧度弯曲（圆心=球心，径向带包住管圈），
-       每个管位开一个圆洞，管底斜切口嵌在洞口上方；摇奖时整块向后抽开松球 */
-    const gateY = byMin + 0.075;                     /* 板顶面贴球底（球底 = byMin + 0.12） */
-    const aH = (N - 1) / 2 * step + 0.20;            /* 板半张角（比管排两端各多出一段） */
-    const gShape = new THREE.Shape();
-    gShape.absarc(0, 0, rt + 0.36, Math.PI / 2 - aH, Math.PI / 2 + aH, false);
-    gShape.absarc(0, 0, rt - 0.36, Math.PI / 2 + aH, Math.PI / 2 - aH, true);
-    gShape.closePath();
-    for (let i = 0; i < N; i++) {
-      const a = (i - (N - 1) / 2) * step;
-      const hole = new THREE.Path();
-      hole.absarc(Math.sin(a) * rt, Math.cos(a) * rt, cfg.tubeR + 0.035, 0, Math.PI * 2, true);
-      gShape.holes.push(hole);
-    }
-    const gGeo = new THREE.ExtrudeGeometry(gShape, { depth: 0.045, bevelEnabled: false, curveSegments: 48 });
-    gGeo.rotateX(-Math.PI / 2);                      /* 竖直成型 → 水平放倒，板顶朝 +Y */
-    const plate = new THREE.Mesh(gGeo, acrylicMat);
-    plate.position.set(cx, gateY, cz);
+    /* 闸门挡板：水平托板贴在管底斜切口下方，摇奖前托住整排管里的球，
+       开始摇奖时向后抽开松球 */
+    const gateY = byMin + 0.098;                     /* 托板顶面贴球底（球底 = byMin + 0.12） */
+    const gateZ = cz - rt * 0.66;
+    const chord = 2 * rt * Math.sin((N - 1) / 2 * step) + 0.35;
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(chord, 0.045, 0.8), acrylicMat);
+    plate.position.set(cx, gateY, gateZ);
     plate.renderOrder = 7; scene.add(plate);
-    var gatePlate = plate, gateBaseZ = 0;
+    var gatePlate = plate, gateBaseZ = gateZ;
   }
 
   /* ---- ③ 出球滑道（DESIGN.md §4 + 用户箭头图 + BV1wb4y1f7Hu 实拍）：
