@@ -203,7 +203,7 @@ const MACH_CFG = [
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),  /* 出球孔开在转轮上方的球壳侧壁 */
     /* 搅拌器（专利 + 真机渲染图）：两个转轮外缘紧贴球壁，周围不多一圈；内盘 3 个半球凸起 /
        外环带 6 个，反向不同速；转轮下面支撑盘，支撑盘下鼓形托壳里藏电机 */
-    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
+    discY: 2.80, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     /* 预览架：等长竖管紧密排成一排（沿球面弧），插在球壳正后方，管底削尖 */
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
@@ -214,7 +214,7 @@ const MACH_CFG = [
     inletHalf: 50 * Math.PI / 180,
     exitHalf: 12 * Math.PI / 180,
     exitDir: new THREE.Vector3(0, -0.826, 0.564).normalize(),
-    discY: 2.80, rHub: 0.15, gapInner: 0.17, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
+    discY: 2.80, rHub: 0.22, gapInner: 0.25, rOuter: 0.53, wInner: 9.0, wOuter: -6.0,
     rackN: 12, rackRR: 0.95, rackLen: 1.5, rackInset: 0.30,
     tubeR: 0.105
   },
@@ -457,8 +457,8 @@ function buildMachine(cfg) {
     capturedBall: null, doneCount: 0,
     /* 拨块：真实物理件（与视觉梯形块同尺寸同转速），碰撞实际拨动小球 */
     pegList: [
-      { r: cfg.rHub * 0.62, rp: 0.05, w: cfg.wInner, n: 4, ph: 0.4 },
-      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, rp: 0.06, w: cfg.wOuter, n: 6, ph: 0 },
+      { r: cfg.rHub * 0.62, rp: 0.055, w: cfg.wInner, n: 4, ph: 0.4 },
+      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, rp: 0.065, w: cfg.wOuter, n: 6, ph: 0 },
     ],
     rotPhase: [0, 0],
   };
@@ -784,8 +784,10 @@ function updateMachine(m, dt) {
               const svz = -pg.w * m.agit * pg.r * Math.cos(th);
               const rvx = b.v.x - svx, rvz = b.v.z - svz;
               const vn = rvx * nx + rvz * nz;
-              if (vn < 0) { b.v.x -= vn * nx * 1.2; b.v.z -= vn * nz * 1.2; }
-              b.v.x += (svx - b.v.x) * 0.3; b.v.z += (svz - b.v.z) * 0.3;
+              if (vn < 0) { b.v.x -= vn * nx * 1.05; b.v.z -= vn * nz * 1.05; }
+              b.v.x += (svx - b.v.x) * 0.45; b.v.z += (svz - b.v.z) * 0.45;
+              /* 撞击点在球心下方：正面撞击把球向前上方挑起，产生真实翻滚 */
+              if (vn < -0.5) b.v.y += Math.min(-vn, 2.0) * 0.3;
             }
           }
         }

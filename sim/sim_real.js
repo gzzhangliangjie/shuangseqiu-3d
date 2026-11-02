@@ -10,10 +10,10 @@ const RAIL_PTS = [
 ];
 
 const CFG = [
-  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.84, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'red', cx:-3.8, cz:0, count:33, R:1.18, cy:3.84, discY:2.80, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:6 },
-  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.84, discY:2.80, rHub:0.15, gapInner:0.17, rOuter:0.53, wInner:9.0, wOuter:-6.0,
+  { key:'blue', cx:3.8, cz:0, count:16, R:1.18, cy:3.84, discY:2.80, rHub:0.22, gapInner:0.25, rOuter:0.53, wInner:9.0, wOuter:-6.0,
     inletHalf:50*Math.PI/180, exitHalf:12*Math.PI/180, exitDir:[0,-0.826,0.564],
     rackN:12, rackRR:0.95, rackInset:0.30, draws:1 },
 ];
@@ -258,8 +258,10 @@ function runMachine(m, log){
               const svz=-pg.w*m.agit*pg.r*Math.cos(th);
               const rvx=b.v[0]-svx, rvz=b.v[2]-svz;
               const vn=rvx*nx+rvz*nz;
-              if(vn<0){ b.v[0]-=vn*nx*1.2; b.v[2]-=vn*nz*1.2; }
+              if(vn<0){ b.v[0]-=vn*nx*1.05; b.v[2]-=vn*nz*1.05; }
               b.v[0]+=(svx-b.v[0])*0.45; b.v[2]+=(svz-b.v[2])*0.45;
+              // 撞击点在球心下方：正面撞击把球向前上方挑起，产生真实翻滚
+              if(vn<-0.5) b.v[1]+=Math.min(-vn,2.0)*0.3;
             }
           }
         }
