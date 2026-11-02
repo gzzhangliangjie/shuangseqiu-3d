@@ -104,7 +104,7 @@ function stepInBall(b,m,dt){
     // 盘面摩擦拖带（球接触转盘被摩擦带动）；主要搅拌动力来自拨块碰撞
     const dx=p[0]-m.cx, dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
     if(Math.abs(p[1]-m.discY)<0.30){
-      const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter?m.wOuter:0);
+      const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter+0.03?m.wOuter:0);
       if(w!==0){
         const sp=w*m.agit*Math.min(rr,m.rOuter)*0.55;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;

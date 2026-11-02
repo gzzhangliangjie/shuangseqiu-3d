@@ -521,7 +521,7 @@ function stepInBall(b, m, dt) {
     const rr = Math.hypot(dx, dz);
     /* 盘面摩擦拖带（球接触转盘被摩擦带动，物理等效）；主要搅拌动力来自拨块碰撞 */
     if (Math.abs(p.y - m.discY) < 0.30) {
-      const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter ? m.wOuter : 0);
+      const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter + 0.03 ? m.wOuter : 0); /* 含轮缘支撑带，防球卡缘 */
       if (w !== 0) {
         const sp = w * m.agit * Math.min(rr, m.rOuter) * 0.55;
         v.x += -dz / (rr + 1e-4) * sp * dt;
