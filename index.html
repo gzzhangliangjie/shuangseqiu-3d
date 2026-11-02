@@ -171,12 +171,12 @@ const blueBase = new THREE.MeshPhysicalMaterial({ color: 0x2743d0, roughness: 0.
 const blueDeep = new THREE.MeshPhysicalMaterial({ color: 0x1c2f9e, roughness: 0.38, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.2, envMapIntensity: 0.8 });
 const glassMat = new THREE.MeshPhysicalMaterial({
   color: 0xaaccff, metalness: 0, roughness: 0.05,
-  transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false,
+  transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: true,
   clearcoat: 1, clearcoatRoughness: 0.06, envMapIntensity: 1.2
 });
 const acrylicMat = new THREE.MeshPhysicalMaterial({
   color: 0xbfd8ff, metalness: 0, roughness: 0.08,
-  transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: false,
+  transparent: true, opacity: 0.2, side: THREE.DoubleSide, depthWrite: true,
   clearcoat: 1, clearcoatRoughness: 0.1, envMapIntensity: 1.1
 });
 
@@ -289,7 +289,7 @@ function buildMachine(cfg) {
   const topTrim = new THREE.Mesh(new THREE.TorusGeometry(1.27, 0.045, 10, 64), blueDeep);
   topTrim.rotation.x = Math.PI / 2; topTrim.position.set(cx, 2.50, cz); scene.add(topTrim);
   const tray = new THREE.Mesh(new THREE.CylinderGeometry(1.34, 1.34, 0.06, 48), acrylicMat);
-  tray.position.set(cx, 2.53, cz); tray.renderOrder = 5; scene.add(tray);    /* 透明亚克力底盘 */
+  tray.position.set(cx, 2.535, cz); tray.renderOrder = 5; scene.add(tray);   /* 透明亚克力底盘（底面2.505，避开底座顶面2.50共面） */
   const logo = new THREE.Mesh(new THREE.CircleGeometry(0.40, 40),
     new THREE.MeshStandardMaterial({ map: makeLogo(cfg.label), transparent: true, roughness: 0.5, emissive: 0x331111, emissiveIntensity: 0.4 }));
   logo.position.set(cx, 1.25, cz + 1.273);
@@ -331,7 +331,9 @@ function buildMachine(cfg) {
     const supGeo = new THREE.ExtrudeGeometry(supShape, { depth: 0.04, bevelEnabled: false, curveSegments: 48 });
     supGeo.rotateX(-Math.PI / 2);
     const sup = new THREE.Mesh(supGeo, acrylicMat);
-    sup.position.set(cx, rotorY + 0.01, cz); sup.renderOrder = 6; scene.add(sup);
+    sup.position.set(cx, rotorY - 0.045, cz); sup.renderOrder = 6; scene.add(sup);
+    /* 托盘顶面(转子下方0.005)与转轮/内盘顶面错开 —— 三者原共面于 rotorY+0.05，
+       旋转面与静止面共面产生随转动闪烁的 Z-fighting 锯齿（用户截图红框） */
   }
   /* 鼓形托壳 + 藏在里面的电机与转轴（参考图：外面只看到透明鼓身） */
   {
