@@ -188,16 +188,17 @@ const railMat = acrylicMat;
    整个台座上的装置（球壳/预览管/搅拌盘/出球机构/滑道）= 全透明有机玻璃，无彩色件。
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
-const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球孔；坡度仅 ~5°，
-                        末端(0.88)落在下轨右端(1.00)内侧 —— 球出洞垂直掉进下轨槽内 */
-  [0.00, 2.52, 0.72], [0.225, 2.48, 0.70], [0.45, 2.44, 0.68],
+const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球洞；坡度 ~11°，
+                        左端(-0.06)封板在落点后方，球出孔后直接落进槽内往右滚 */
+  [-0.06, 2.686, 0.869], [0.44, 2.56, 0.72],
 ];
-const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，落差 0.16） → 左行缓坡 → 取球位；
-                        整体上移贴近柜身、坡度 ~4°、长度收紧到 1.4 */
-  [0.95, 2.30, 0.68], [0.20, 2.25, 0.58], [-0.55, 2.20, 0.48],
+const HOLE_PTS = [   /* 层间落球洞：竖直圆孔，上接第一层末端、下接第二层接球口，
+                        球从这里垂直掉到下一层（两端通透，就是「洞」本身） */
+  [0.44, 2.56, 0.72], [0.44, 2.44, 0.72],
 ];
-const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
-  [0.00, 2.78, 0.79], [0.00, 2.52, 0.72],
+const LOWER_PTS = [  /* 下层滑道：右端接球口（正对落球洞，落差 0.12） → 左行缓坡 5.2° → 取球位；
+                        整体再上移 0.15，贴紧柜身 */
+  [0.50, 2.445, 0.73], [-0.11, 2.385, 0.59], [-0.72, 2.325, 0.45],
 ];
 
 /* ================= 滑道：物理与视觉共用的唯一几何源 =================
@@ -218,10 +219,9 @@ const RAIL_FLOOR = 0.124;                       /* 与圆管段同深 → 接引
    低壁的约束能力是按真实球体算出来的，不是靠额外加一堵看不见的墙。 */
 const RAIL_WALLTOP = -0.045;
 const RAIL_SEGS = [
-  [INTRO_PTS[0], INTRO_PTS[1], false, true],    /* 出球孔接引短槽（出口端封板，下端与上轨连通） */
-  [UPPER_PTS[0], UPPER_PTS[1], true, true],     /* 上轨中段（与前后段连续贯通） */
-  [UPPER_PTS[1], UPPER_PTS[2], true, true],     /* 上轨末端 = 洞，球滚出后自由掉落 */
-  [LOWER_PTS[0], LOWER_PTS[1], false, true],    /* 下轨右端端板：接住从洞掉落的球 */
+  [UPPER_PTS[0], UPPER_PTS[1], false, true],    /* 第一层滑槽：左端封板，右端开 = 落球洞口 */
+  [HOLE_PTS[0], HOLE_PTS[1], true, true],       /* 层间落球洞（竖直圆孔，两端通透） */
+  [LOWER_PTS[0], LOWER_PTS[1], true, true],     /* 第二层右段：右端开敞（球从落球洞垂直下来，不需要挡板） */
   [LOWER_PTS[1], LOWER_PTS[2], true, false],    /* 左端端板 = 取球位挡块 */
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
@@ -543,9 +543,9 @@ function buildMachine(cfg) {
         new THREE.Matrix4().makeBasis(dir, up, side));
 
       if (vertical) {
-        const thUp = Math.atan2(up.dot(_X.clone().applyQuaternion(q)), up.clone().applyQuaternion(q).z);
-        const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.012, 28, 1, true,
-          thUp + slot, Math.PI * 2 - slot * 2);
+        /* 竖直孔段 = 层间落球洞：就是物理孔壁本身（整圈亚克力管，半径=物理膛 RAIL_R），
+           不加任何专门画的圈——球从第一层末端滚进这个洞，垂直掉到第二层槽里 */
+        const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.004, 28, 1, true);
         const mesh = new THREE.Mesh(geo, railMat);
         mesh.position.copy(mid); mesh.quaternion.copy(q);
         mesh.renderOrder = 7; scene.add(mesh);
@@ -580,7 +580,7 @@ function buildMachine(cfg) {
     /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
     const postY0 = 0.62;
     for (const [px, py, pz] of [
-      [cx + UPPER_PTS[1][0], UPPER_PTS[1][1], cz + UPPER_PTS[1][2]],   /* 上层槽中段 */
+      [cx + UPPER_PTS[0][0], UPPER_PTS[0][1], cz + UPPER_PTS[0][2]],   /* 上层槽起点（避让落球洞） */
       [cx + LOWER_PTS[1][0], LOWER_PTS[1][1], cz + LOWER_PTS[1][2]],   /* 下层槽中段 */
       [stopX, stopY, stopZ],                                          /* 取球位端 */
     ]) {
@@ -774,8 +774,9 @@ function railWallCollide(b, m, dt) {
     const relx = b.p.x - (ax + dx * rawT), rely = b.p.y - (ay + dy * rawT), relz = b.p.z - (az + dz * rawT);
     const d = Math.hypot(relx, rely, relz);
     if (Math.abs(uy) > 0.7) {
-      /* ---- 竖直接引段：圆管膛，球心约束在轴 3.5cm 内自由下落（仅段内，无限圆柱会把球钉在半空） ---- */
-      if (wT > -0.02 && wT < L + 0.02 && d < RAIL_R && d > 1e-6) {
+      /* ---- 竖直孔/管段：圆管膛，球心约束在轴 3.5cm 内自由下落（仅段内，无限圆柱会把球钉在半空）。
+              洞顶前 4cm 是「喇叭口」：球从上层斜着冲进洞口时，球心还在洞外，不能被孔壁顶回去 ---- */
+      if (wT > R_BALL * 0.45 && wT < L + 0.02 && d < RAIL_R && d > 1e-6) {
         const touching = d > RAIL_WALL_GAP - 0.002;
         if (touching) {
           if (d > RAIL_WALL_GAP) {

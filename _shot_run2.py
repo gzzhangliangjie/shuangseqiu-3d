@@ -33,9 +33,9 @@ send("Runtime.evaluate", {"expression": "document.getElementById('startBtn').cli
 time.sleep(WAIT)
 
 VIEWS = [
-    ("_rail", (-3.8 + 1.5, 2.20, 2.35), (-3.8, 1.95, 0.50)),   # 滑道侧视
-    ("_rail2", (-3.8 - 0.2, 2.60, 2.05), (-3.8, 2.02, 0.55)),   # 滑道俯侧
-    ("_hole", (-3.8, 2.50, 1.85), (-3.8, 2.78, 0.80)),          # 出球孔特写
+    ("_rail", (-2.6, 2.85, 2.45), (-3.3, 2.45, 0.65)),   # 两层滑道+落球洞侧视
+    ("_rail2", (-4.9, 2.75, 1.95), (-3.3, 2.45, 0.62)),  # 左侧视
+    ("_hole", (-3.8, 2.75, 2.0), (-3.8, 2.6, 0.75)),     # 洞区正面特写
 ]
 for name, cam, tgt in VIEWS:
     send("Runtime.evaluate", {"expression": f"""

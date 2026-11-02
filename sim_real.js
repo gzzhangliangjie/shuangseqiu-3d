@@ -4,14 +4,14 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端落球孔（坡度 ~5°，末端落在下轨右端内侧） */
-  [0.00, 2.52, 0.72], [0.225, 2.48, 0.70], [0.45, 2.44, 0.68],
+const UPPER_PTS = [   /* 第一层：出球孔正下方 → 右端落球洞口（坡度 ~11°） */
+  [-0.06, 2.686, 0.869], [0.44, 2.56, 0.72],
 ];
-const LOWER_PTS = [   /* 下层滑道：右端接球口（落差 0.16） → 左行缓坡 → 取球位；上移+坡度 ~4° */
-  [0.95, 2.30, 0.68], [0.20, 2.25, 0.58], [-0.55, 2.20, 0.48],
+const HOLE_PTS = [    /* 层间落球洞：竖直圆孔（两端通透） */
+  [0.44, 2.56, 0.72], [0.44, 2.44, 0.72],
 ];
-const INTRO_PTS = [
-  [0.00, 2.78, 0.79], [0.00, 2.52, 0.72],
+const LOWER_PTS = [   /* 第二层：右端接球口 → 左行缓坡 5.2° → 取球位（整体再上移 0.15） */
+  [0.50, 2.445, 0.73], [-0.11, 2.385, 0.59], [-0.72, 2.325, 0.45],
 ];
 
 const CFG = [
@@ -27,10 +27,9 @@ const CFG = [
    段格式 [a, b, openA, openB]：open 端=洞（球可自由进出，如上轨末端洞），
    闭端=端板（球心停在板前一个球半径处）。 */
 const RAIL_SEGS = [
-  [INTRO_PTS[0], INTRO_PTS[1], false, true],      /* 出球孔接引短管（下端与上轨连通） */
-  [UPPER_PTS[0], UPPER_PTS[1], true, true],       /* 内部接口全部开敞（管道连续） */
-  [UPPER_PTS[1], UPPER_PTS[2], true, true],       /* 上轨末端 = 洞，球滚出后自由掉落 */
-  [LOWER_PTS[0], LOWER_PTS[1], false, true],      /* 下轨右端板：接住掉落球（兜底） */
+  [UPPER_PTS[0], UPPER_PTS[1], false, true],      /* 第一层滑槽：左端封板，右端开 = 落球洞口 */
+  [HOLE_PTS[0], HOLE_PTS[1], true, true],         /* 层间落球洞（竖直圆孔） */
+  [LOWER_PTS[0], LOWER_PTS[1], true, true],       /* 第二层右段：右端开敞（球从落球洞垂直下来） */
   [LOWER_PTS[1], LOWER_PTS[2], true, false],      /* 左端板 = 取球位挡块 */
 ];
 const RAIL_WALL_GAP = 0.035;                  /* 球面到槽壁余隙 = 球心离轴约束量（与 index.html 同值） */
@@ -185,8 +184,8 @@ function railWallCollide(b,m,dt){
     const relx=b.p[0]-(ax+dx*rawT), rely=b.p[1]-(ay+dy*rawT), relz=b.p[2]-(az+dz*rawT);
     const d=Math.hypot(relx,rely,relz);
     if(Math.abs(uy)>0.7){
-      /* 竖直接引段：圆管膛 */
-      if(wT>-0.02&&wT<L+0.02&&d<TUBE_BORE&&d>1e-6&&d>TUBE_IN-0.002){
+      /* 竖直孔/管段：圆管膛。洞顶前 4cm 为喇叭口——球斜着冲进洞口时球心还在洞外，不能被孔壁顶回 */
+      if(wT>R_BALL*0.45&&wT<L+0.02&&d<TUBE_BORE&&d>1e-6&&d>TUBE_IN-0.002){
         if(d>TUBE_IN){
           const nx=relx/d, ny=rely/d, nz=relz/d;
           b.p[0]=ax+dx*rawT+nx*TUBE_IN; b.p[1]=ay+dy*rawT+ny*TUBE_IN; b.p[2]=az+dz*rawT+nz*TUBE_IN;
@@ -298,7 +297,7 @@ function stepRailBall(b,m,dt){
     const a=LOWER_PTS[0], c=LOWER_PTS[1];
     const ax=m.cx+a[0], ay=a[1], az=m.cz+a[2];
     const dx=m.cx+c[0]-ax, dy=c[1]-ay, dz=m.cz+c[2]-az;
-    const t=0.43;   /* x≈0.70：紧挨队尾右侧，落回槽内继续滚向队列 */
+    const t=0.28;   /* x≈0.33：洞口左侧空白区，落回槽内继续滚向队列 */
     b.p[0]=ax+dx*t; b.p[1]=ay+dy*t; b.p[2]=az+dz*t;
     b.v[0]=0; b.v[1]=0; b.v[2]=0; b.settle=0; b.railT=0;
   }
