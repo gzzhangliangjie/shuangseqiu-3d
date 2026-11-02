@@ -185,14 +185,29 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
    整个台座上的装置（球壳/预览管/搅拌盘/出球机构/滑道）= 全透明有机玻璃，无彩色件。
    预览架 = 多根竖直透明管插入球壳顶部（摇奖前球全在管内下段，球壳是空的）。
    出球口 = 球壳底部偏前小孔（单球通过）；滑道 = 上横管向右 → 右端下行 → 下横槽向左 → 取球位。 */
-const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端，微下坡向右；末端=洞 */
-  [0.00, 2.30, 0.70], [0.60, 2.28, 0.70], [1.18, 2.26, 0.70],
+const UPPER_PTS = [  /* 上层滑道（相对 cx,cz）：出球孔正下方 → 右端落球孔；缩短 + 6° 下坡 */
+  [0.00, 2.30, 0.70], [0.45, 2.255, 0.70], [0.85, 2.21, 0.70],
 ];
-const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞，捕获抛球落点谱） → 左行下坡 → 取球位 */
-  [1.28, 2.16, 0.70], [0.00, 2.12, 0.52], [-1.10, 2.09, 0.52],
+const LOWER_PTS = [  /* 下层滑道：右端接球口（正对上轨末端洞） → 左行下坡 → 取球位；缩短 + 坡度加倍（滚得更快） */
+  [0.95, 2.12, 0.70], [0.10, 2.05, 0.58], [-0.65, 2.00, 0.52],
 ];
 const INTRO_PTS = [  /* 出球孔 → 上层滑道口的接引短槽 */
   [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
+];
+
+/* ================= 滑道：物理与视觉共用的唯一几何源 =================
+   RAIL_SEGS 就是物理碰撞用的段表；视觉槽体/端板全部由它派生，槽半径与槽口角也来自同一组常量。
+   物理一套、表现一套的问题从结构上堵死：改这里 = 同时改物理和画面。
+   段格式 [a, b, openA, openB]：open 端 = 洞（球可自由进出），闭端 = 端板挡墙。 */
+const RAIL_WALL_GAP = 0.035;                    /* 球面到槽壁余隙 = 球心偏离轴线的约束量 */
+const RAIL_R = R_BALL + RAIL_WALL_GAP;          /* 槽内壁半径 = 物理管膛半径（唯一真值） */
+const RAIL_OPEN_COS = 0.5;                      /* 法向朝上超过 60° 的弧段：物理不设壁，视觉就开槽口 */
+const RAIL_SEGS = [
+  [INTRO_PTS[0], INTRO_PTS[1], false, true],    /* 出球孔接引短槽（出口端封板，下端与上轨连通） */
+  [UPPER_PTS[0], UPPER_PTS[1], true, true],     /* 上轨中段（与前后段连续贯通） */
+  [UPPER_PTS[1], UPPER_PTS[2], true, true],     /* 上轨末端 = 洞，球滚出后自由掉落 */
+  [LOWER_PTS[0], LOWER_PTS[1], false, true],    /* 下轨右端端板：接住从洞掉落的球 */
+  [LOWER_PTS[1], LOWER_PTS[2], true, false],    /* 左端端板 = 取球位挡块 */
 ];
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
@@ -488,51 +503,52 @@ function buildMachine(cfg) {
     var gatePlate = plate, gateBaseZ = gateZ;
   }
 
-  /* ---- ③ 出球滑道（两段式，对照真机视频/参考图）：半开槽 + 支撑柱
-          出球孔 → 接引短槽 → 上层槽右滚 → 末端洞掉落 → 下层槽左滚 → 取球位 ---- */
+  /* ---- ③ 出球滑道：几何 100% 取自物理段表 RAIL_SEGS（同一份数据，不存在第二套）---- */
   {
-    /* 滑道 = 半开槽（U 形半管，对照真机：不是裸管）+ 端板 + 支撑柱 */
-    const TUBE_R = R_BALL + 0.035;
-    function trough(pts, segs) {
-      for (let i = 0; i < pts.length - 1; i++) {
-        const A = new THREE.Vector3(cx + pts[i][0], pts[i][1], cz + pts[i][2]);
-        const B = new THREE.Vector3(cx + pts[i + 1][0], pts[i + 1][1], cz + pts[i + 1][2]);
-        const dir = B.clone().sub(A); const len = dir.length(); dir.normalize();
-        const geo = new THREE.CylinderGeometry(TUBE_R, TUBE_R, len + 0.01, 20, 1, true, 0, Math.PI);
-        const mesh = new THREE.Mesh(geo, acrylicMat);
-        mesh.position.copy(A).addScaledVector(dir, len / 2);
-        mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
-        /* 半壳默认在局部 +x 侧：若变换后朝上则翻转 180°，让开口永远朝上 */
-        const side = new THREE.Vector3(1, 0, 0).applyQuaternion(mesh.quaternion);
-        if (side.y > 0) mesh.rotateY(Math.PI);
-        mesh.renderOrder = 7; scene.add(mesh);
-      }
-      /* 端板（闭端） */
-      for (const [p, nx] of segs) {
-        if (nx === null) continue;
-        const plate = new THREE.Mesh(new THREE.CylinderGeometry(TUBE_R, TUBE_R, 0.03, 20), acrylicMat);
-        plate.position.set(cx + p[0], p[1], cz + p[2]);
-        plate.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), nx.clone().normalize());
+    /* 敞开式滑槽（不是透明管）：槽内壁半径 = RAIL_R（与物理管膛同值），
+       槽口角度 = 物理放开上壁的同一角度（RAIL_OPEN_COS）；端板也按 openA/openB 生成，
+       物理有挡墙才画挡板，物理是洞就是敞口。 */
+    const _Y = new THREE.Vector3(0, 1, 0);
+    const slot = Math.acos(RAIL_OPEN_COS);          /* 单侧槽口角，与物理 openTop 判定同源 */
+    for (const [a, c, openA, openB] of RAIL_SEGS) {
+      const A = new THREE.Vector3(cx + a[0], a[1], cz + a[2]);
+      const B = new THREE.Vector3(cx + c[0], c[1], cz + c[2]);
+      const dir = B.clone().sub(A); const len = dir.length(); dir.normalize();
+      const q = new THREE.Quaternion().setFromUnitVectors(_Y, dir);
+      /* 「世界上方」在管道局部柱坐标里的角度 → 槽口对准正上方 */
+      const upP = _Y.clone().addScaledVector(dir, -dir.y);
+      if (upP.lengthSq() < 1e-6) upP.set(0, 0, 1); else upP.normalize();
+      const lx = upP.dot(new THREE.Vector3(1, 0, 0).applyQuaternion(q));
+      const lz = upP.dot(new THREE.Vector3(0, 0, 1).applyQuaternion(q));
+      const thUp = Math.atan2(lx, lz);
+      const geo = new THREE.CylinderGeometry(RAIL_R, RAIL_R, len + 0.012, 28, 1, true,
+        thUp + slot, Math.PI * 2 - slot * 2);
+      const mesh = new THREE.Mesh(geo, acrylicMat);
+      mesh.position.copy(A).addScaledVector(dir, len / 2);
+      mesh.quaternion.copy(q);
+      mesh.renderOrder = 7; scene.add(mesh);
+      /* 端板：物理闭端才画 */
+      for (const [P, n, closed] of [[A, dir.clone().negate(), !openA], [B, dir.clone(), !openB]]) {
+        if (!closed) continue;
+        const plate = new THREE.Mesh(new THREE.CylinderGeometry(RAIL_R, RAIL_R, 0.03, 24), acrylicMat);
+        plate.position.copy(P);
+        plate.quaternion.setFromUnitVectors(_Y, n);
         plate.renderOrder = 7; scene.add(plate);
       }
     }
-    const lowDir = new THREE.Vector3(cx + LOWER_PTS[1][0] - (cx + LOWER_PTS[0][0]), LOWER_PTS[1][1] - LOWER_PTS[0][1], cz + LOWER_PTS[1][2] - (cz + LOWER_PTS[0][2])).normalize();
-    trough(INTRO_PTS, [[INTRO_PTS[0], new THREE.Vector3(0, 1, 0)], [null, null]]);
-    trough(UPPER_PTS, [[UPPER_PTS[0], new THREE.Vector3(0, 1, 0)], [null, null]]);   /* 末端=洞 */
-    trough(LOWER_PTS, [[LOWER_PTS[0], lowDir], [null, null]]);                       /* 右端板兜底 */
     /* 左端挡块：竖直挡板 + 视觉柱 */
     const stopX = cx + LOWER_PTS[2][0], stopY = LOWER_PTS[2][1], stopZ = cz + LOWER_PTS[2][2];
-    const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.30, TUBE_R * 2 + 0.05), acrylicMat);
+    const stopPlate = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.30, RAIL_R * 2 + 0.05), acrylicMat);
     stopPlate.position.set(stopX + 0.055, stopY - 0.02, stopZ); stopPlate.renderOrder = 7; scene.add(stopPlate);
     /* 支撑柱：从透明柜身段（蓝座顶 0.62）顶到滑道底部 */
     const postY0 = 0.62;
     for (const [px, py, pz] of [
-      [cx + 0.60, UPPER_PTS[1][1], cz + 0.70],          /* 上层槽中段 */
-      [cx + 0.00, LOWER_PTS[1][1], cz + 0.52],          /* 下层槽中段 */
-      [stopX, stopY, stopZ],                            /* 取球位端 */
+      [cx + UPPER_PTS[1][0], UPPER_PTS[1][1], cz + UPPER_PTS[1][2]],   /* 上层槽中段 */
+      [cx + LOWER_PTS[1][0], LOWER_PTS[1][1], cz + LOWER_PTS[1][2]],   /* 下层槽中段 */
+      [stopX, stopY, stopZ],                                          /* 取球位端 */
     ]) {
-      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, py - TUBE_R - postY0, 10), acrylicMat);
-      post.position.set(px, (py - TUBE_R + postY0) / 2, pz); post.renderOrder = 7; scene.add(post);
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, py - RAIL_R - postY0, 10), acrylicMat);
+      post.position.set(px, (py - RAIL_R + postY0) / 2, pz); post.renderOrder = 7; scene.add(post);
     }
   }
 
@@ -584,6 +600,7 @@ function buildMachine(cfg) {
 MACH_CFG.forEach(buildMachine);
 window.machines = machines;                       /* 调试/端到端验证钩子 */
 window.camera = camera; window.controls = controls;
+window.scene = scene; window.THREE = THREE;       /* 调试钩子：场景图/几何诊断 */
 
 /* ================= HUD ================= */
 const resultsEl = document.getElementById('results');
@@ -702,16 +719,9 @@ function stepInBall(b, m, dt) {
   }
 }
 
-/* 出球滑道（全 3D 刚性管道）：球保留完整自由度，管壁=胶囊体内壁约束。
-   段格式 [a, b, openA, openB]：open 端=洞（自由进出，如上轨末端洞），闭端=端板挡墙 */
-const RAIL_SEGS = [
-  [INTRO_PTS[0], INTRO_PTS[1], false, true],      /* 出球孔接引短管（下端与上轨连通） */
-  [UPPER_PTS[0], UPPER_PTS[1], true, true],
-  [UPPER_PTS[1], UPPER_PTS[2], true, true],       /* 上轨末端 = 洞，球滚出后自由掉落 */
-  [LOWER_PTS[0], LOWER_PTS[1], false, true],      /* 下轨右端板：接住掉落球（兜底） */
-  [LOWER_PTS[1], LOWER_PTS[2], true, false],      /* 左端板 = 取球位挡块 */
-];
-const TUBE_IN = 0.035, TUBE_BORE = R_BALL + 0.035;
+/* 出球滑道碰撞：与视觉共用 RAIL_SEGS / RAIL_R / RAIL_OPEN_COS（定义在几何参数区）。
+   球保留完整自由度，槽壁 = 圆柱内壁约束；槽口区（法向朝上超过 RAIL_OPEN_COS）不设壁，
+   与视觉上开的那条槽口完全对应。 */
 const _sv = new THREE.Vector3();
 function railWallCollide(b, m, dt) {
   for (const [a, c, openA, openB] of RAIL_SEGS) {
@@ -725,15 +735,15 @@ function railWallCollide(b, m, dt) {
     const px = ax + dx * t, py = ay + dy * t, pz = az + dz * t;
     const rx = b.p.x - px, ry = b.p.y - py, rz = b.p.z - pz;
     const d = Math.hypot(rx, ry, rz);
-    const inBore = d < TUBE_BORE && d > 1e-6;
-    const touching = d > TUBE_IN - 0.002;        /* 接触余量：贴面静置也算接触 */
+    const inBore = d < RAIL_R && d > 1e-6;
+    const touching = d > RAIL_WALL_GAP - 0.002;   /* 接触余量：贴面静置也算接触 */
     if (inBore) {
-    /* 开口槽：法向朝上（球在轴线上方的槽口区）不做侧壁约束 —— 球可从上方落入 */
-    const openTop = rawT > 0 && rawT < 1 && ry > 0.35 * d;
+    /* 槽口区（与视觉开口同角度）：不做侧壁约束 —— 球可从上方落入槽内 */
+    const openTop = rawT > 0 && rawT < 1 && ry > RAIL_OPEN_COS * d;
     if (rawT > 0 && rawT < 1 && touching && !openTop) {
-      if (d > TUBE_IN) {
+      if (d > RAIL_WALL_GAP) {
         _sv.set(rx / d, ry / d, rz / d);
-        b.p.set(px + _sv.x * TUBE_IN, py + _sv.y * TUBE_IN, pz + _sv.z * TUBE_IN);
+        b.p.set(px + _sv.x * RAIL_WALL_GAP, py + _sv.y * RAIL_WALL_GAP, pz + _sv.z * RAIL_WALL_GAP);
         const vn = b.v.dot(_sv);
         if (vn > 0) b.v.addScaledVector(_sv, -(1 + 0.05) * vn);   /* 近非弹性法向接触 */
       }
@@ -750,7 +760,7 @@ function railWallCollide(b, m, dt) {
       if (!end) continue;
       const pen = (b.p.x - end[0]) * end[3] + (b.p.y - end[1]) * end[4] + (b.p.z - end[2]) * end[5];
       const distEnd = Math.hypot(b.p.x - end[0], b.p.y - end[1], b.p.z - end[2]);
-      const inside = pen > -R_BALL && pen < 0 && distEnd < TUBE_BORE + 0.02;
+      const inside = pen > -R_BALL && pen < 0 && distEnd < RAIL_R + 0.02;
       const outside = pen >= 0 && pen < R_BALL + 0.06 && distEnd < 0.35;
       if (inside || outside) {
         if (outside) {   /* 从外面撞板：放回板内侧一个球半径处 */

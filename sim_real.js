@@ -4,11 +4,11 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
-const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端，微下坡向右；末端=洞 */
-  [0.00, 2.30, 0.70], [0.60, 2.28, 0.70], [1.18, 2.26, 0.70],
+const UPPER_PTS = [   /* 上层滑道：出球孔正下方 → 右端落球孔；缩短 + 6° 下坡 */
+  [0.00, 2.30, 0.70], [0.45, 2.255, 0.70], [0.85, 2.21, 0.70],
 ];
-const LOWER_PTS = [   /* 下层滑道：右端接球口（正对上轨末端洞，捕获抛球落点谱） → 左行下坡 → 取球位 */
-  [1.28, 2.16, 0.70], [0.00, 2.12, 0.52], [-1.10, 2.09, 0.52],
+const LOWER_PTS = [   /* 下层滑道：右端接球口（正对上轨末端洞） → 左行下坡 → 取球位；缩短 + 坡度加倍 */
+  [0.95, 2.12, 0.70], [0.10, 2.05, 0.58], [-0.65, 2.00, 0.52],
 ];
 const INTRO_PTS = [   /* 出球孔 → 上层滑道口的接引短槽 */
   [0.00, 2.78, 0.79], [0.00, 2.30, 0.70],
@@ -33,8 +33,10 @@ const RAIL_SEGS = [
   [LOWER_PTS[0], LOWER_PTS[1], false, true],      /* 下轨右端板：接住掉落球（兜底） */
   [LOWER_PTS[1], LOWER_PTS[2], true, false],      /* 左端板 = 取球位挡块 */
 ];
-const TUBE_IN = 0.035;                        /* 管壁限位（轴心距）= 管内半径 - 球半径 */
-const TUBE_BORE = R_BALL + 0.035;             /* 管膛半径（球心在膛内才参与管壁碰撞） */
+const RAIL_WALL_GAP = 0.035;                  /* 球面到槽壁余隙 = 球心离轴约束量（与 index.html 同值） */
+const TUBE_IN = RAIL_WALL_GAP;                /* 管壁限位（轴心距）= 槽内半径 - 球半径 */
+const TUBE_BORE = R_BALL + RAIL_WALL_GAP;     /* 槽内半径（球心在膛内才参与槽壁碰撞） */
+const RAIL_OPEN_COS = 0.5;                    /* 槽口：法向朝上超过 60° 不设壁（与视觉开口同值） */
 
 /* ---------- 预览架（与 index.html 同公式）：等长管环形排列插球壳后半部 ---------- */
 function buildRack(cfg){
@@ -183,7 +185,7 @@ function railWallCollide(b,m,dt){
     const touching=d>TUBE_IN-0.002;              /* 接触余量：贴面静置也算接触（否则振荡不衰减） */
     if(inBore){
       /* 侧壁约束：仅在本段中段（两端由端板/洞负责）；开口槽=法向朝上不约束（球可从上方落入） */
-      if(rawT>0&&rawT<1&&touching&&!(ry>0.35*d)){
+      if(rawT>0&&rawT<1&&touching&&!(ry>RAIL_OPEN_COS*d)){
         if(d>TUBE_IN){
           const nx=rx/d, ny=ry/d, nz=rz/d;
           b.p[0]=px+nx*TUBE_IN; b.p[1]=py+ny*TUBE_IN; b.p[2]=pz+nz*TUBE_IN;
@@ -197,7 +199,8 @@ function railWallCollide(b,m,dt){
            环向快速衰减（球 rolling 时物理上不存在环向滑动），切向只留滚动阻力 */
         const vd=b.v[0]*ux+b.v[1]*uy+b.v[2]*uz;
         let cx2=b.v[0]-ux*vd, cy2=b.v[1]-uy*vd, cz2=b.v[2]-uz*vd;
-        const kC=1-0.25, kR=1-0.4*dt;            /* 环向衰减 / 滚动阻力（决定滚速上限） */
+        const lowSeg=(ay+dy*0.5)<LOWER_PTS[0][1];  /* 下轨=排队区：滚动摩擦加强 */
+        const kC=1-0.25, kR=1-(lowSeg?3.5:0.4)*dt; /* 环向衰减 / 滚动阻力（决定滚速上限） */
         b.v[0]=ux*vd*kR+cx2*kC; b.v[1]=uy*vd*kR+cy2*kC; b.v[2]=uz*vd*kR+cz2*kC;
       }
     }
