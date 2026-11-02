@@ -72,7 +72,13 @@ function makeMachine(cfg){
   }
   return {...cfg, rackDefs, balls, agit:1, loadOpen:true, holeOpen:false, captured:null,
     cosExit:Math.cos(cfg.exitHalf),
-    exitW:[cfg.cx+cfg.exitDir[0]*cfg.R, cfg.cy+cfg.exitDir[1]*cfg.R, cfg.cz+cfg.exitDir[2]*cfg.R]};
+    exitW:[cfg.cx+cfg.exitDir[0]*cfg.R, cfg.cy+cfg.exitDir[1]*cfg.R, cfg.cz+cfg.exitDir[2]*cfg.R],
+    // 拨块：真实物理件（与页面视觉梯形块同尺寸同转速），碰撞实际拨动小球
+    pegList:[
+      {r:cfg.rHub*0.62, rp:0.05, w:cfg.wInner, n:4, ph:0.4},
+      {r:cfg.gapInner+(cfg.rOuter-cfg.gapInner)*0.55, rp:0.06, w:cfg.wOuter, n:6, ph:0},
+    ],
+    rotPhase:[0,0]};
 }
 
 function stepInBall(b,m,dt){
@@ -95,15 +101,13 @@ function stepInBall(b,m,dt){
 
   v[1]-=G*dt;
   if(m.agit>0.01){
-    // 同轴双转子：内盘/外环带反向不同速，以刻缝中点分界
+    // 盘面摩擦拖带（球接触转盘被摩擦带动）；主要搅拌动力来自拨块碰撞
     const dx=p[0]-m.cx, dz=p[2]-m.cz, rr=Math.hypot(dx,dz);
-    if(Math.abs(p[1]-m.discY)<0.55){
+    if(Math.abs(p[1]-m.discY)<0.30){
       const w=rr<(m.rHub+m.gapInner)/2?m.wInner:(rr<m.rOuter?m.wOuter:0);
       if(w!==0){
-        const sp=w*m.agit*Math.min(rr,m.rOuter);
+        const sp=w*m.agit*Math.min(rr,m.rOuter)*0.55;
         v[0]+=-dz/(rr+1e-4)*sp*dt; v[2]+=dx/(rr+1e-4)*sp*dt;
-        if(rr>m.gapInner&&rr<m.rOuter){ v[0]+=dx/(rr+1e-4)*1.6*m.agit*dt; v[2]+=dz/(rr+1e-4)*1.6*m.agit*dt; }
-        if(p[1]<m.discY+0.34&&p[1]>m.discY-0.16&&Math.random()<0.06) v[1]+=3.2*m.agit*dt*(0.5+Math.random());
       }
     }
   }
@@ -225,15 +229,7 @@ function runMachine(m, log){
     t+=DT;
     if(!m.captured){
       if(!holePhase){ stirT+=DT; if(stirT>3){ m.holeOpen=true; holePhase=true; stirT=0; } }
-      else { stirT+=DT; if(stirT>3.5){ stirT=1.0; // 防堵：定期给最近球冲量 + 全场抖动
-          let best=null,bd=1e9;
-          for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
-            const dd=Math.hypot(m.exitW[0]-b.p[0],m.exitW[1]-b.p[1],m.exitW[2]-b.p[2]);
-            if(dd<bd){bd=dd;best=b;} }
-          if(best){ const dx=m.exitW[0]-best.p[0],dy=m.exitW[1]-best.p[1],dz=m.exitW[2]-best.p[2];
-            const dd=Math.hypot(dx,dy,dz)||1; best.v[0]+=dx/dd*3.5; best.v[1]+=dy/dd*3.5; best.v[2]+=dz/dd*3.5; }
-          for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
-            b.v[0]+=(Math.random()-0.5)*1.2; b.v[1]+=Math.random()*1.0; b.v[2]+=(Math.random()-0.5)*1.2; } } }
+      else { stirT+=DT; } // 纯物理出球：开阀后拨块持续搅拌，球堆自然流动到孔口即捕获
     } else if(m.captured&&m.captured.placed){
       m.captured=null; placedCount++; holePhase=false; stirT=0;
     }
@@ -244,6 +240,31 @@ function runMachine(m, log){
     collideGroup(m.balls.filter(b=>b.state==='in'&&!b.tube));
     collideTubes(m);
     collideRail(m.balls.filter(b=>b.state==='rail'),m);
+    // 旋转拨块：真实物理件，逐块碰撞把球实际拨动（混合的动力来源）
+    if(m.agit>0.01){
+      m.rotPhase[0]+=m.wInner*m.agit*DT; m.rotPhase[1]+=m.wOuter*m.agit*DT;
+      for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;
+        if(Math.abs(b.p[1]-m.discY-0.09)>0.14)continue;
+        for(let i=0;i<2;i++){ const pg=m.pegList[i];
+          for(let k=0;k<pg.n;k++){
+            const th=m.rotPhase[i]+pg.ph+k/pg.n*Math.PI*2;
+            const px=m.cx+Math.cos(th)*pg.r, pz=m.cz-Math.sin(th)*pg.r;
+            const dx=b.p[0]-px, dz=b.p[2]-pz;
+            const dd=Math.hypot(dx,dz), minD=R_BALL+pg.rp;
+            if(dd<minD&&dd>1e-6){
+              const nx=dx/dd,nz=dz/dd;
+              b.p[0]=px+nx*minD; b.p[2]=pz+nz*minD;
+              const svx=-pg.w*m.agit*pg.r*Math.sin(th);
+              const svz=-pg.w*m.agit*pg.r*Math.cos(th);
+              const rvx=b.v[0]-svx, rvz=b.v[2]-svz;
+              const vn=rvx*nx+rvz*nz;
+              if(vn<0){ b.v[0]-=vn*nx*1.2; b.v[2]-=vn*nz*1.2; }
+              b.v[0]+=(svx-b.v[0])*0.3; b.v[2]+=(svz-b.v[2])*0.3;
+            }
+          }
+        }
+      }
+    }
     const fl=m.discY+0.05+R_BALL;
     const mR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-fl)**2)), m.rOuter+0.03);
     for(const b of m.balls){ if(b.state!=='in'||b.tube)continue;

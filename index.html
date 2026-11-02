@@ -348,13 +348,12 @@ function buildMachine(cfg) {
   const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), acrylicMat);
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
   /* 拨块：铬金属梯形块（真机渲染图形态），内圈 4 小块 */
-  const wedgeIn = new THREE.CylinderGeometry(0.042, 0.075, 0.08, 4, 1);
+  const wedgeIn = new THREE.CylinderGeometry(0.028, 0.048, 0.045, 4, 1);
   wedgeIn.rotateY(Math.PI / 4);
   for (let k = 0; k < 4; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 4 * Math.PI * 2 + 0.4;
     const blk = new THREE.Mesh(wedgeIn, acrylicMat);
-    blk.scale.x = 1.35;
-    blk.position.set(cfg.rHub * 0.62, 0.09, 0); blk.renderOrder = 6;
+    blk.position.set(cfg.rHub * 0.62, 0.05, 0); blk.renderOrder = 6;
     hold.add(blk); inner.add(hold);
   }
   discSpins.push(inner);
@@ -370,13 +369,12 @@ function buildMachine(cfg) {
   const ring = new THREE.Mesh(ringGeo, acrylicMat);
   ring.renderOrder = 6; outer.add(ring);
   /* 外圈 6 大块，同样铬金属 */
-  const wedgeOut = new THREE.CylinderGeometry(0.06, 0.105, 0.10, 4, 1);
+  const wedgeOut = new THREE.CylinderGeometry(0.038, 0.06, 0.055, 4, 1);
   wedgeOut.rotateY(Math.PI / 4);
   for (let k = 0; k < 6; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 6 * Math.PI * 2;
     const blk = new THREE.Mesh(wedgeOut, acrylicMat);
-    blk.scale.x = 1.3;
-    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.10, 0); blk.renderOrder = 6;
+    blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.055, 0); blk.renderOrder = 6;
     hold.add(blk); outer.add(hold);
   }
   discSpins.push(outer);
@@ -457,6 +455,12 @@ function buildMachine(cfg) {
     exitW: new THREE.Vector3(cx, cy, cz).addScaledVector(cfg.exitDir, R),
     phase: 'idle', timer: 0, drawsLeft: cfg.key === 'red' ? 6 : 1,
     capturedBall: null, doneCount: 0,
+    /* 拨块：真实物理件（与视觉梯形块同尺寸同转速），碰撞实际拨动小球 */
+    pegList: [
+      { r: cfg.rHub * 0.62, rp: 0.05, w: cfg.wInner, n: 4, ph: 0.4 },
+      { r: cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, rp: 0.06, w: cfg.wOuter, n: 6, ph: 0 },
+    ],
+    rotPhase: [0, 0],
   };
   let idx = 0;
   for (const td of rackDefs) {
@@ -515,20 +519,13 @@ function stepInBall(b, m, dt) {
     /* 同轴双转子（专利 US6145836）：中心盘/外环盘反向不同速，切向拖带 + 拨杆弹跳 */
     const dx = p.x - m.cx, dz = p.z - m.cz;
     const rr = Math.hypot(dx, dz);
-    if (Math.abs(p.y - m.discY) < 0.55) {
+    /* 盘面摩擦拖带（球接触转盘被摩擦带动，物理等效）；主要搅拌动力来自拨块碰撞 */
+    if (Math.abs(p.y - m.discY) < 0.30) {
       const w = rr < (m.rHub + m.gapInner) / 2 ? m.wInner : (rr < m.rOuter ? m.wOuter : 0);
       if (w !== 0) {
-        const sp = w * m.agit * Math.min(rr, m.rOuter);
+        const sp = w * m.agit * Math.min(rr, m.rOuter) * 0.55;
         v.x += -dz / (rr + 1e-4) * sp * dt;
         v.z += dx / (rr + 1e-4) * sp * dt;
-        if (rr > m.gapInner && rr < m.rOuter) {
-          /* 拨凸把球往外缘带（真实拨料方向），球更快翻到轮缘和出口区 */
-          v.x += dx / (rr + 1e-4) * 1.6 * m.agit * dt;
-          v.z += dz / (rr + 1e-4) * 1.6 * m.agit * dt;
-        }
-        if (p.y < m.discY + 0.34 && p.y > m.discY - 0.16 && Math.random() < 0.06) {
-          v.y += 3.2 * m.agit * dt * (0.5 + Math.random());
-        }
       }
     }
   }
@@ -726,26 +723,7 @@ function updateMachine(m, dt) {
       setPhase('出球口档杆开启 · 等待出球', true);
     }
   } else if (m.phase === 'draw') {
-    if (m.timer > 3.5 && !m.capturedBall) {
-      /* 防堵兜底：给最靠近出口的球一个物理冲量 + 全场抖动（模拟真机持续搅拌防颗粒拱） */
-      let best = null, bd = 1e9;
-      for (const b of m.balls) {
-        if (b.state !== 'in') continue;
-        const d = b.p.distanceTo(m.exitW);
-        if (d < bd) { bd = d; best = b; }
-      }
-      if (best) {
-        _dir.subVectors(m.exitW, best.p).normalize();
-        best.v.addScaledVector(_dir, 3.5);
-      }
-      for (const b of m.balls) {
-        if (b.state !== 'in') continue;
-        b.v.x += (Math.random() - 0.5) * 1.2;
-        b.v.y += Math.random() * 1.0;
-        b.v.z += (Math.random() - 0.5) * 1.2;
-      }
-      m.timer = 1.5;
-    }
+    /* 纯物理出球：开阀后拨块持续搅拌，球堆自然流动到孔口即捕获，无任何兜底作弊 */
     if (m.capturedBall && m.capturedBall.placed) {
       m.capturedBall = null;
       m.drawsLeft--;
@@ -768,10 +746,9 @@ function updateMachine(m, dt) {
   }
 
   m.agit += (m.agitTarget - m.agit) * Math.min(1, dt * 2);
-  if (m.agit > 0.01) {
-    /* 视觉转速与物理场一致（wInner/wOuter），看得见搅拌方向与球被带动的方向吻合 */
-    for (let i = 0; i < 2; i++) m.discSpins[i].rotation.y += (i === 0 ? m.wInner : m.wOuter) * m.agit * dt;
-  }
+  /* 视觉盘相位直接取物理相位 —— 拨块视觉与拨块碰撞严格同帧 */
+  m.discSpins[0].rotation.y = m.rotPhase[0];
+  m.discSpins[1].rotation.y = m.rotPhase[1];
   m.valvePivot.rotation.x = -(m.holeOpen ? 1 : 0) * 1.5;
 
   /* 球物理：按真实时间累积子步（固定步长 1/120），保证任何帧率下速度一致 */
@@ -786,6 +763,34 @@ function updateMachine(m, dt) {
     collideGroup(inBalls);
     collideTubes(m);
     collideRail(railBalls, m);
+    /* 旋转拨块：真实物理件，逐块碰撞把球实际拨动（混合的动力来源） */
+    if (m.agit > 0.01) {
+      m.rotPhase[0] += m.wInner * m.agit * DT;
+      m.rotPhase[1] += m.wOuter * m.agit * DT;
+      for (const b of inBalls) {
+        if (Math.abs(b.p.y - m.discY - 0.09) > 0.14) continue;
+        for (let i = 0; i < 2; i++) {
+          const pg = m.pegList[i];
+          for (let k = 0; k < pg.n; k++) {
+            const th = m.rotPhase[i] + pg.ph + k / pg.n * Math.PI * 2;
+            const px = m.cx + Math.cos(th) * pg.r, pz = m.cz - Math.sin(th) * pg.r;
+            const dx = b.p.x - px, dz = b.p.z - pz;
+            const dd = Math.hypot(dx, dz), minD = R_BALL + pg.rp;
+            if (dd < minD && dd > 1e-6) {
+              const nx = dx / dd, nz = dz / dd;
+              b.p.x = px + nx * minD; b.p.z = pz + nz * minD;
+              /* 拨块表面速度（绕 y 转，视觉 rotation.y=th → 世界 (cos,-sin)） */
+              const svx = -pg.w * m.agit * pg.r * Math.sin(th);
+              const svz = -pg.w * m.agit * pg.r * Math.cos(th);
+              const rvx = b.v.x - svx, rvz = b.v.z - svz;
+              const vn = rvx * nx + rvz * nz;
+              if (vn < 0) { b.v.x -= vn * nx * 1.2; b.v.z -= vn * nz * 1.2; }
+              b.v.x += (svx - b.v.x) * 0.3; b.v.z += (svz - b.v.z) * 0.3;
+            }
+          }
+        }
+      }
+    }
     /* 护城河清扫：碰撞把球挤到轮缘外的话，收回转轮支撑圈（球始终落在转轮上） */
     {
       const fl = m.discY + 0.05 + R_BALL;
