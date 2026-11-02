@@ -37,12 +37,12 @@ def shot(name):
 
 send("Runtime.evaluate", {"expression": "document.getElementById('startBtn').click()"})
 time.sleep(10)
-# 球壳底部搅拌球特写
-ev("""(() => { camera.position.set(-3.3, 3.5, 1.15); controls.target.set(-3.85, 3.05, 0.25); controls.update(); })()""")
+# 球壳底部搅拌球特写（极近机位）
+ev("""(() => { camera.position.set(-3.65, 3.25, 0.55); controls.target.set(-3.85, 3.05, 0.25); controls.update(); })()""")
 time.sleep(0.6)
 shot("_ball_close.png")
 time.sleep(4)
-ev("""(() => { camera.position.set(-4.4, 3.5, 1.15); controls.target.set(-3.85, 3.05, 0.25); controls.update(); })()""")
+ev("""(() => { camera.position.set(-4.15, 3.4, 0.0); controls.target.set(-3.85, 3.05, 0.25); controls.update(); })()""")
 time.sleep(0.6)
 shot("_ball_close2.png")
 ws.close()

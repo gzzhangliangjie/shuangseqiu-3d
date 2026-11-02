@@ -237,23 +237,29 @@ function makeBallMesh(num, color) {
   const grad = ctx.createRadialGradient(160, 70, 20, 256, 128, 280);
   grad.addColorStop(0, 'rgba(255,255,255,.30)'); grad.addColorStop(1, 'rgba(0,0,0,.22)');
   ctx.fillStyle = grad; ctx.fillRect(0, 0, 512, 256);
-  /* 真机样式：球面 10 个白圈数字（上4 + 赤道2 + 下4，行间交错）——
-     球转到任意朝向都有多个数字正对视线 */
-  const spots = [
-    [64, 61], [192, 61], [320, 61], [448, 61],
-    [160, 128], [416, 128],
-    [64, 195], [192, 195], [320, 195], [448, 195],
-  ];
-  for (const [cx, cy] of spots) {
-    const disc = ctx.createRadialGradient(cx - 10, cy - 8, 4, cx, cy, 42);
-    disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.8, '#f2f2f2'); disc.addColorStop(1, '#d8d8d8');
-    ctx.fillStyle = disc;
-    ctx.beginPath(); ctx.arc(cx, cy, 39, 0, Math.PI * 2); ctx.fill();
-    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.stroke();
-    ctx.fillStyle = '#111';
-    ctx.font = 'bold 54px Arial';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(num, cx, cy + 3);
+  /* 球面 10 个白圈数字：斐波那契球面布点（按球面积均匀分布）——
+     任意朝向都有数字正对视线，且间距处处相等；
+     近极区白圈横向加宽补偿 equirect 畸变（球面上看仍是等大正圆） */
+  const GA = Math.PI * (3 - Math.sqrt(5));
+  for (let k = 0; k < 10; k++) {
+    const lat = Math.asin(1 - 2 * (k + 0.5) / 10);        /* 纬度按球面积均匀 */
+    const lon = k * GA;                                    /* 经度黄金角交错 */
+    const py = (0.5 - lat / Math.PI) * 256;
+    const rx = 39 / Math.max(Math.cos(lat), 0.45), ry = 39;
+    const px = ((lon / (Math.PI * 2)) % 1) * 512;
+    for (const ox of [0, -512, 512]) {                     /* 横跨接缝补画 */
+      const cx = px + ox;
+      if (cx + rx < 0 || cx - rx > 512) continue;
+      const disc = ctx.createRadialGradient(cx - 10, py - 8, 4, cx, py, rx);
+      disc.addColorStop(0, '#ffffff'); disc.addColorStop(0.8, '#f2f2f2'); disc.addColorStop(1, '#d8d8d8');
+      ctx.fillStyle = disc;
+      ctx.beginPath(); ctx.ellipse(cx, py, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.15)'; ctx.stroke();
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 54px Arial';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(num, cx, py + 3);
+    }
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
