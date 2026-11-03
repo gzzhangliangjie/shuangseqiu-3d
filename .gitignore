@@ -26,3 +26,17 @@ p1_*.png
 p2_*.png
 w1_*.png
 w2_*.png
+
+# 会话产生的临时测试脚本/素材（分析脚本 _backtest/_sim_*/_blue_probe 保留提交）
+_e2e_*.py
+_diag_*.py
+_shot_*.py
+_gen_*.py
+_t_*.py
+_probe_*.py
+_mk*.html
+_sj.html
+_mixkit_*.html
+_sfx_*.mp3
+_sfx_*.json
+sim3d_results.json

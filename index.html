@@ -48,8 +48,78 @@
   #startBtn { background: linear-gradient(135deg, #e53935, #b71c1c); box-shadow: 0 4px 24px rgba(229,57,53,.45); }
   #startBtn:hover:not(:disabled) { transform: translateY(-2px); }
   #resetBtn { background: rgba(255,255,255,.6); color: #25354d; border-color: rgba(40,60,90,.2); }
-  #muteBtn { background: rgba(255,255,255,.6); color: #25354d; border-color: rgba(40,60,90,.2); }
-  #muteBtn.off { background: rgba(208,52,44,.85); color: #fff; border-color: rgba(255,255,255,.3); }
+  #pickerBtn { background: rgba(37,53,77,.78); color: #fff; border-color: rgba(255,255,255,.3);
+               padding: 11px 22px; font-size: 15px; letter-spacing: 1px; }
+  #pickerBtn:hover { background: rgba(37,53,77,.94); transform: translateY(-2px); }
+
+  /* ---------- 模拟结果：右上角「是否加入」提示 ---------- */
+  #simPrompt { display: none; width: 100%; background: #f7fafd; color: #25354d; border-radius: 12px;
+               padding: 11px 13px 12px; box-shadow: 0 10px 30px rgba(0,0,0,.22); text-align: left;
+               opacity: 1; transform: none; transition: opacity .45s ease, transform .45s ease; }
+  #simPrompt.on { display: block; animation: simIn .28s cubic-bezier(.2,1.3,.5,1); }
+  #simPrompt.out { opacity: 0; transform: translateY(-8px); }   /* 淡出，不突然消失 */
+  @keyframes simIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  #simPrompt .pt { font-size: 12px; color: #6b7c93; margin-bottom: 7px; display: flex;
+                   align-items: center; justify-content: space-between; }
+  #simPrompt .pt b { font-size: 13px; color: #1f3a5f; letter-spacing: .3px; }
+  #simPromptX { width: 22px; height: 22px; padding: 0; border-radius: 50%; font-size: 14px;
+                line-height: 1; background: rgba(37,53,77,.08); color: #5b6b82;
+                border: none; cursor: pointer; letter-spacing: 0; }
+  #simPromptX:hover { background: rgba(37,53,77,.18); color: #25354d; }
+  #simPrompt .pt b::before { content: "✓ "; color: #1f7a3d; }
+  .sim-balls { display: flex; gap: 6px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+  .sim-ball { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center;
+              justify-content: center; font-size: 13px; font-weight: 700; color: #fff; }
+  .sim-ball.r { background: radial-gradient(circle at 35% 30%, #ff7a6e, #c62828 70%); }
+  .sim-ball.b { background: radial-gradient(circle at 35% 30%, #6fa8ff, #0d47a1 70%); margin-left: 4px; }
+  #simPrompt { cursor: pointer; }
+  #simPrompt .pn { font-size: 11.5px; color: #5b6b82; line-height: 1.6; }
+  #simPrompt .pn b { color: #1f7a3d; font-weight: 700; }
+  #simPrompt .pn .hint { color: #8494a8; }
+
+  /* ---------- 模拟结果：右侧列表 ---------- */
+  #simPanel { position: fixed; right: 16px; top: 74px; z-index: 30; width: 332px;
+              display: flex; flex-direction: column; align-items: flex-end; gap: 8px;
+              font-size: 12.5px; color: #22364f; }
+  button#simToggle { padding: 8px 15px; font-size: 13px; font-weight: 600; letter-spacing: 1px;
+                     border-radius: 18px; background: rgba(37,53,77,.8); color: #fff;
+                     border-color: rgba(255,255,255,.25); }
+  button#simToggle:hover { background: rgba(37,53,77,.95); }
+  #simCount { color: #ffd479; }
+  #simPanel.collapsed #simBody { display: none; }
+  #simBody { width: 100%; background: rgba(247,250,253,.95); border-radius: 12px;
+             max-height: calc(100vh - 210px); overflow: auto; padding: 10px 12px 12px;
+             box-shadow: 0 10px 30px rgba(0,0,0,.16); text-align: left; }
+  .sim-head { display: flex; justify-content: space-between; align-items: center;
+              font-size: 12px; color: #6b7c93; padding-bottom: 7px; margin-bottom: 7px;
+              border-bottom: 1px solid rgba(40,60,90,.12); }
+  button.sim-mini { padding: 3px 9px; font-size: 11.5px; font-weight: 500; letter-spacing: 0;
+                    border-radius: 10px; background: rgba(40,60,90,.08); color: #4a5c74;
+                    border: 1px solid rgba(40,60,90,.15); }
+  button.sim-mini:hover { background: rgba(208,52,44,.12); color: #b3261e; }
+  .sim-item { padding: 8px 0; border-bottom: 1px dashed rgba(40,60,90,.14); cursor: pointer; }
+  .sim-item:last-child { border-bottom: 0; }
+  .sim-row1 { display: flex; justify-content: space-between; align-items: center; font-size: 12px; }
+  .sim-idx { font-weight: 700; color: #25354d; }
+  .sim-badge { padding: 1px 8px; border-radius: 9px; font-size: 11px; font-weight: 600; }
+  .sim-badge.good { background: rgba(45,140,70,.14); color: #1f7a3d; }
+  .sim-badge.mid { background: rgba(219,150,20,.16); color: #8a5c05; }
+  .sim-badge.bad { background: rgba(200,50,45,.14); color: #a32d2d; }
+  .sim-balls-sm { display: flex; gap: 4px; align-items: center; margin: 6px 0 5px; flex-wrap: wrap; }
+  .sim-balls-sm span.b { width: 24px; height: 24px; border-radius: 50%; display: inline-flex;
+                         align-items: center; justify-content: center; font-size: 11.5px;
+                         font-weight: 700; color: #fff; }
+  .sim-balls-sm span.b.r { background: linear-gradient(160deg,#e0534b,#b3241d); }
+  .sim-balls-sm span.b.bl { background: linear-gradient(160deg,#4a8ff0,#0d47a1); margin-left: 5px; }
+  .sim-sum { font-size: 11.5px; color: #5b6b82; }
+  .sim-tb { display: none; margin-top: 6px; font-size: 11.5px; }
+  .sim-item.open .sim-tb { display: table; width: 100%; border-collapse: collapse; }
+  .sim-tb td { padding: 2.5px 0; border-bottom: 1px solid rgba(40,60,90,.07); }
+  .sim-tb td:first-child { color: #6b7c93; width: 62px; }
+  .sim-tb td.ok { color: #1f7a3d; }
+  .sim-tb td.no { color: #b3261e; }
+  .sim-tb td:last-child { text-align: right; color: #8494a8; font-size: 11px; }
+  .sim-empty { color: #8494a8; font-size: 12px; padding: 10px 2px; line-height: 1.7; }
   button:disabled { opacity: .4; cursor: not-allowed; }
   #legend {
     display: none;                                 /* 隐藏左上角「真机复刻…」图例说明 */
@@ -77,7 +147,27 @@
 <div id="controls">
   <button id="startBtn">开始摇奖</button>
   <button id="resetBtn">重 置</button>
-  <button id="muteBtn">音效：开</button>
+  <button id="pickerBtn" title="打开双色球选号工具（历史分布 + 物理摇奖对接）">选号工具 →</button>
+</div>
+
+<div id="simPanel" class="collapsed">
+  <div id="simPrompt">
+    <div class="pt"><b id="simPromptTitle">已加入模拟结果</b><button id="simPromptX" title="关闭">×</button></div>
+    <div class="sim-balls" id="simPromptBalls"></div>
+    <div class="pn" id="simPromptEval"></div>
+  </div>
+  <button id="simToggle">模拟结果 <b id="simCount">0</b></button>
+  <div id="simBody">
+    <div class="sim-head">
+      <span>3D 物理摇奖 · 已加入的结果</span>
+      <button class="sim-mini" id="simClear">清空</button>
+    </div>
+    <div id="simList"></div>
+    <div class="sim-empty" id="simEmpty">
+      每摇完一期自动加入列表，右上角会弹出入列提示。<br>
+      评估口径基于 2083 期真实开奖统计，只描述号码形态，不改变中奖概率。
+    </div>
+  </div>
 </div>
 
 <script>
@@ -86,6 +176,64 @@ window.addEventListener('error', e => {
   const p = document.getElementById('phase');
   if (p) { p.textContent = '⚠ 页面错误: ' + e.message; p.className = 'active'; }
 });
+document.getElementById('pickerBtn').onclick = () => {
+  const btn = document.getElementById('pickerBtn'), old = btn.textContent;
+  const tip = (msg) => {
+    let t = document.getElementById('pickerTip');
+    if (!t) {
+      t = document.createElement('div'); t.id = 'pickerTip';
+      t.style.cssText = 'position:fixed;bottom:74px;left:50%;transform:translateX(-50%);z-index:20;' +
+        'font-size:13px;line-height:1.7;text-align:center;max-width:84vw;padding:9px 13px;' +
+        'border-radius:8px;background:#a32d2d;color:#fff';
+      document.body.appendChild(t);
+    }
+    t.innerHTML = msg; btn.textContent = old;
+  };
+  /* 跳转时把 3D 模拟结果编码进 hash 随链接带过去（两页不在同一浏览器存储时也能同步）。
+     优先取页面内存数据，回退 localStorage——预览沙箱下 localStorage 可能整体不可用 */
+  const s3dTail = (() => {
+    try {
+      let arr = null;
+      if (window.SimLog && window.SimLog.snapshot) arr = window.SimLog.snapshot();
+      if (!arr || !arr.length) {
+        arr = JSON.parse(localStorage.getItem('ssq3d_sim_results_v1') || '[]');
+      }
+      arr = (arr || []).map(x => ({
+        r: x.red || x.r || [], b: (x.blue != null ? x.blue : x.b) || 0,
+        t: x.time || x.t || 0, e: x.ev || x.e || null
+      })).filter(x => x.r.length === 6);
+      return arr.length ? '#s3d=' + encodeURIComponent(JSON.stringify(arr.slice(-30))) : '';
+    } catch (e) { return ''; }
+  })();
+  if (location.protocol === 'file:') { location.href = 'picker/index.html' + s3dTail; return; }
+  btn.textContent = '检测中…';
+  window.__probePicker().then(u => {
+    if (u) location.href = u + s3dTail;
+    else tip('找不到选号工具页面。请二选一：<br>' +
+        '① 执行 node picker/sim_server.js 后打开 http://127.0.0.1:8731/index.html<br>' +
+        '② 直接双击 picker/index.html');
+  });
+};
+/* 后台预探测选号工具地址并缓存：页面一加载就开始，点击时无需等待（修"要点两下"） */
+window.__probePicker = (() => {
+  const MKPICK = 'id=' + '"lnkMachine"';   /* 拼接写法：避免本页源码里的字符串自匹配 */
+  function tryFetch(u) {
+    return new Promise(res => {
+      const ctl = ('AbortController' in window) ? new AbortController() : null;
+      const to = setTimeout(() => { if (ctl) ctl.abort(); res(null); }, 3000);
+      fetch(u, { cache: 'no-store', signal: ctl ? ctl.signal : undefined })
+        .then(r => { clearTimeout(to); return r.ok ? r.text() : null; })
+        .then(t => res(t && t.indexOf(MKPICK) >= 0 ? u : null))
+        .catch(() => { clearTimeout(to); res(null); });
+    });
+  }
+  let p = null;
+  return function () {
+    if (!p) p = tryFetch('/picker/index.html').then(u => u || tryFetch('picker/index.html'));
+    return p;
+  };
+})();
+window.__probePicker();   /* 预热 */
 </script>
 <script type="importmap">
 {
@@ -1370,13 +1518,14 @@ function collideGroup(arr) {
 }
 
 /* ================= 流程控制（真机顺序，PLC 按固定搅拌间隔出球） ================= */
-const state = { running: false, currentIdx: 0 };
+const state = { running: false, currentIdx: 0, drawRed: [], drawBlue: null };
 const startBtn = document.getElementById('startBtn');
 const resetBtn = document.getElementById('resetBtn');
 
 function startShow() {
   if (state.running) return;
   state.running = true;
+  state.drawRed = []; state.drawBlue = null;
   state.currentIdx = 0;
   startBtn.disabled = true; resetBtn.disabled = true;
   AudioFX.ensure(); AudioFX.start(); AudioFX.startStir();   /* 开奖提示音 + 启动搅拌持续音 */
@@ -1392,6 +1541,8 @@ function onBallPlaced(b, m) {
   const totalIdx = m.key === 'red' ? m.doneCount : 6;
   const el = slotEls[totalIdx];
   if (el) { el.textContent = b.num; el.classList.add('filled', 'pop'); }
+  /* 物理侧直接记账：模拟结果列表用这份数据，不依赖 DOM 文本 */
+  if (m.key === 'red') state.drawRed.push(b.num); else state.drawBlue = b.num;
   AudioFX.place();                       /* 球落位清脆声 */
   m.doneCount++;
 }
@@ -1466,6 +1617,15 @@ function updateMachine(m, dt) {
         for (const mm of machines) mm.agitTarget = 0; /* 搅拌嗡鸣渐止 */
         /* 蓝机终态画面先停留 2 秒（看清楚最后一个蓝球），再回到全景 */
         setTimeout(() => { focusCamera('overview'); }, 2000);
+        /* 摇完一期：入列 + 右上角提示（5 秒后淡出） */
+        setTimeout(() => {
+          if (!machines.every(mm => mm.phase === 'done')) return;   /* 期间被重置则跳过 */
+          const red = state.drawRed.slice().sort((a, b) => a - b);
+          const blue = state.drawBlue;
+          if (red.length === 6 && blue >= 1 && window.SimLog) {
+            window.SimLog.onDrawComplete(red, blue);
+          }
+        }, 2500);
       }
     }
   }
@@ -1593,6 +1753,7 @@ function updateMachine(m, dt) {
 
 /* ================= 重置 ================= */
 function resetAll() {
+  state.drawRed = []; state.drawBlue = null;
   for (const m of machines) {
     m.phase = 'idle'; m.agit = 0; m.agitTarget = 0;
     m.physicsActive = false; m.restCount = 0;
@@ -1632,13 +1793,6 @@ function resetAll() {
 resetBtn.disabled = true;
 startBtn.addEventListener('click', startShow);
 resetBtn.addEventListener('click', resetAll);
-const muteBtn = document.getElementById('muteBtn');
-muteBtn.addEventListener('click', () => {
-  const m = !AudioFX.isMuted();
-  AudioFX.mute(m);
-  muteBtn.textContent = m ? '音效：关' : '音效：开';
-  muteBtn.classList.toggle('off', m);
-});
 
 /* ================= 主循环 ================= */
 let last = performance.now();
@@ -1665,6 +1819,296 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
   composer.setSize(innerWidth, innerHeight);
 });
+</script>
+
+<!-- 历史开奖数据：仅用于计算形态评估基线。单文件托管时可能 404，此时退回纯理论口径 -->
+<script src="picker/data.js"></script>
+<script>
+/* ===== 3D 模拟结果列表 + 形态评估 =====
+   摇完一期由主模块调用 SimLog.onDrawComplete(red, blue)。
+   评估基线从 2083 期真实开奖实时算出（分位数 / 各形态出现率），不是拍脑袋的常量。 */
+(function () {
+  'use strict';
+
+  var list = [], base = null;
+  var KEY = 'ssq3d_sim_results_v1';
+
+  /* ---------- 历史基线 ---------- */
+  function bump(o, k) { o[k] = (o[k] || 0) + 1; }
+  function consOf(r) {
+    var g = 0, c = 1;
+    for (var i = 1; i < 6; i++) { if (r[i] === r[i - 1] + 1) c++; else { if (c >= 2) g++; c = 1; } }
+    if (c >= 2) g++;
+    return g;
+  }
+  function tailsOf(r) {
+    var t = {};
+    for (var i = 0; i < 6; i++) t[r[i] % 10] = 1;
+    return Object.keys(t).length;
+  }
+  function qv(sorted, p) {
+    var i = (sorted.length - 1) * p, lo = Math.floor(i), hi = Math.min(lo + 1, sorted.length - 1);
+    return Math.round(sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo));
+  }
+  function pctOf(sorted, v) {
+    var lo = 0, hi = sorted.length;
+    while (lo < hi) { var m = (lo + hi) >> 1; if (sorted[m] <= v) lo = m + 1; else hi = m; }
+    return lo / sorted.length;
+  }
+  function buildBase() {
+    if (base) return base;
+    var D = window.SSQ_DATA;
+    if (!D || !D.length) return null;
+    var sums = [], spans = [], odd = {}, big = {}, zone = {}, cons = {}, tail = {}, rep = {};
+    for (var i = 0; i < D.length; i++) {
+      var r = D[i][1], s = 0, o = 0, bg = 0, z = [0, 0, 0];
+      for (var j = 0; j < 6; j++) {
+        var x = r[j]; s += x;
+        if (x % 2) o++;
+        if (x >= 17) bg++;
+        z[x <= 11 ? 0 : (x <= 22 ? 1 : 2)]++;
+      }
+      sums.push(s); spans.push(r[5] - r[0]);
+      bump(odd, o); bump(big, bg); bump(zone, z.join(':')); bump(cons, consOf(r)); bump(tail, tailsOf(r));
+      if (i > 0) {
+        var p = D[i - 1][1], m = 0;
+        for (j = 0; j < 6; j++) if (p.indexOf(r[j]) >= 0) m++;
+        bump(rep, m);
+      }
+    }
+    sums.sort(function (a, b) { return a - b; });
+    spans.sort(function (a, b) { return a - b; });
+    base = { n: D.length, sums: sums, spans: spans, odd: odd, big: big,
+             zone: zone, cons: cons, tail: tail, rep: rep };
+    return base;
+  }
+
+  /* ---------- 单期评估 ---------- */
+  function evaluate(red, blue, prevRed) {
+    var b = buildBase();
+    var s = 0, odd = 0, big = 0, z = [0, 0, 0];
+    for (var i = 0; i < 6; i++) {
+      var x = red[i]; s += x;
+      if (x % 2) odd++;
+      if (x >= 17) big++;
+      z[x <= 11 ? 0 : (x <= 22 ? 1 : 2)]++;
+    }
+    var span = red[5] - red[0], cons = consOf(red), tail = tailsOf(red);
+    var items = [];
+    if (!b) {   /* 无历史数据：只给形态描述，不做判定 */
+      items.push({ k: '和值', v: s, ok: true, note: '无历史基线' });
+      items.push({ k: '跨度', v: span, ok: true, note: '无历史基线' });
+      items.push({ k: '奇偶', v: odd + ':' + (6 - odd), ok: true, note: '' });
+      items.push({ k: '大小', v: big + ':' + (6 - big), ok: true, note: '' });
+      items.push({ k: '三区', v: z.join(':'), ok: true, note: '' });
+      items.push({ k: '连号', v: cons ? cons + ' 组' : '无', ok: true, note: '' });
+      items.push({ k: '尾数', v: tail + ' 个', ok: true, note: '' });
+      items.push({ k: '重号', v: prevRed ? red.filter(function (x) { return prevRed.indexOf(x) >= 0; }).length + ' 个' : '—', ok: true, note: '' });
+      return { items: items, pass: items.length, verdict: '未加载历史数据，仅描述形态', level: 'mid', sum: s, span: span };
+    }
+    var p5s = qv(b.sums, 0.05), p95s = qv(b.sums, 0.95), p50s = qv(b.sums, 0.5);
+    var p5p = qv(b.spans, 0.05), p95p = qv(b.spans, 0.95);
+    items.push({ k: '和值', v: s, ok: s >= p5s && s <= p95s, note: '历史 90% 落在 ' + p5s + '~' + p95s + '（中位 ' + p50s + '）' });
+    items.push({ k: '跨度', v: span, ok: span >= p5p && span <= p95p, note: '历史 90% 落在 ' + p5p + '~' + p95p });
+
+    function rate(map, k) { return (map[k] || 0) / b.n; }
+    var ro = rate(b.odd, odd), rb = rate(b.big, big), rz = rate(b.zone, z.join(':'));
+    var rc = rate(b.cons, cons), rt = rate(b.tail, tail);
+    items.push({ k: '奇偶', v: odd + ':' + (6 - odd), ok: ro >= 0.1, note: '该比例历史占 ' + (ro * 100).toFixed(1) + '%' });
+    items.push({ k: '大小', v: big + ':' + (6 - big), ok: rb >= 0.1, note: '该比例历史占 ' + (rb * 100).toFixed(1) + '%' });
+    items.push({ k: '三区', v: z.join(':'), ok: rz >= 0.05, note: '该分布历史占 ' + (rz * 100).toFixed(1) + '%' });
+    items.push({ k: '连号', v: cons ? cons + ' 组' : '无', ok: rc >= 0.15, note: '该情况历史占 ' + (rc * 100).toFixed(1) + '%' });
+    items.push({ k: '尾数', v: tail + ' 个', ok: rt >= 0.1, note: '该情况历史占 ' + (rt * 100).toFixed(1) + '%' });
+    if (prevRed) {
+      var rn = 0;
+      for (i = 0; i < 6; i++) if (prevRed.indexOf(red[i]) >= 0) rn++;
+      var rr = rate(b.rep, rn);
+      items.push({ k: '重号', v: rn + ' 个', ok: rr >= 0.1, note: '与上一期相比，该情况历史占 ' + (rr * 100).toFixed(1) + '%' });
+    } else {
+      items.push({ k: '重号', v: '—', ok: true, note: '无参照期' });
+    }
+    var pass = items.filter(function (x) { return x.ok; }).length;
+    var level = pass >= 7 ? 'good' : (pass >= 5 ? 'mid' : 'bad');
+    var verdict = pass >= 7 ? '典型形态' : (pass >= 5 ? '基本正常' : '偏冷门');
+    return { items: items, pass: pass, verdict: verdict, level: level, sum: s, span: span };
+  }
+
+  /* ---------- 渲染 ---------- */
+  function pad(n) { return (n < 10 ? '0' : '') + n; }
+  function ballsHTML(red, blue, small) {
+    var h = '', i;
+    if (small) {
+      for (i = 0; i < red.length; i++) h += '<span class="b r">' + pad(red[i]) + '</span>';
+      h += '<span class="b bl">' + pad(blue) + '</span>';
+    } else {
+      for (i = 0; i < red.length; i++) h += '<span class="sim-ball r">' + pad(red[i]) + '</span>';
+      h += '<span class="sim-ball b">' + pad(blue) + '</span>';
+    }
+    return h;
+  }
+  function render() {
+    var box = document.getElementById('simList');
+    var emp = document.getElementById('simEmpty');
+    document.getElementById('simCount').textContent = list.length;
+    emp.style.display = list.length ? 'none' : 'block';
+    var h = '';
+    for (var i = list.length - 1; i >= 0; i--) {
+      var it = list[i], e = it.ev;
+      h += '<div class="sim-item" data-i="' + i + '">' +
+             '<div class="sim-row1"><span class="sim-idx">#' + (i + 1) + '</span>' +
+             '<span class="sim-badge ' + e.level + '">' + e.verdict + ' ' + e.pass + '/8</span></div>' +
+             '<div class="sim-balls-sm">' + ballsHTML(it.red, it.blue, true) + '</div>' +
+             '<div class="sim-sum">和值 ' + e.sum + ' · 跨度 ' + e.span +
+             ' · 奇偶 ' + countOdd(it.red) + ':' + (6 - countOdd(it.red)) + '</div>' +
+             '<table class="sim-tb">';
+      for (var j = 0; j < e.items.length; j++) {
+        var x = e.items[j];
+        h += '<tr><td>' + x.k + '</td><td class="' + (x.ok ? 'ok' : 'no') + '">' + x.v +
+             '</td><td>' + x.note + '</td></tr>';
+      }
+      h += '</table></div>';
+    }
+    box.innerHTML = h;
+  }
+  function countOdd(r) { var c = 0; for (var i = 0; i < 6; i++) if (r[i] % 2) c++; return c; }
+
+  /* ---------- 持久化 ----------
+     权威存储是结果文件 sim3d_results.json，由本地服务（node picker/sim_server.js）读写；
+     没启动服务时下面的远程调用静默失败，页面照常工作（数据留在 localStorage / 内存）。 */
+  var API = (location.port === '8731' ? '' : 'http://127.0.0.1:8731') + '/api/sim3d';
+  function pack() {
+    return list.map(function (x) { return { r: x.red, b: x.blue, t: x.time, e: x.ev }; });
+  }
+  function remoteSave() {
+    try {
+      /* text/plain 触发不了 CORS 预检，跨源（file://、预览面板）也能直接 POST */
+      fetch(API, { method: 'POST', headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify(pack()) }).catch(function () {});
+    } catch (e) {}
+  }
+  function remoteLoad(then) {
+    try {
+      fetch(API, { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (j) {
+          var arr = (j && j.results) || [], seen = {}, i, added = 0;
+          for (i = 0; i < list.length; i++)
+            seen[list[i].time + '|' + list[i].blue + '|' + list[i].red.join(',')] = 1;
+          for (i = 0; i < arr.length; i++) {
+            var x = arr[i];
+            var red = (x.r || []).slice().sort(function (a, b) { return a - b; });
+            var blue = +x.b || 0;
+            if (red.length !== 6 || blue < 1 || blue > 16) continue;
+            var k = (+x.t || 0) + '|' + blue + '|' + red.join(',');
+            if (seen[k]) continue;
+            seen[k] = 1;
+            list.push({ red: red, blue: blue, time: +x.t || 0, ev: x.e || null });
+            added++;
+          }
+          if (added) {
+            list.sort(function (a, b) { return a.time - b.time; });
+            reevaluate();
+            render(); save();
+          }
+          if (then) then(added);
+        }).catch(function () { if (then) then(0); });
+    } catch (e) { if (then) then(0); }
+  }
+  /* 按时间序统一重算全部评估（重号参照 = 列表中上一条，首条参照真实最新开奖） */
+  function reevaluate() {
+    var D = window.SSQ_DATA;
+    var prev = (D && D.length)
+      ? D[D.length - 1][1].slice().sort(function (a, b) { return a - b; }) : null;
+    for (var i = 0; i < list.length; i++) {
+      list[i].ev = evaluate(list[i].red, list[i].blue, prev);
+      prev = list[i].red;
+    }
+  }
+  function save() {
+    try {
+      /* 连评估结果一起落盘，选号工具读取后无需重算历史基线 */
+      localStorage.setItem(KEY, JSON.stringify(pack()));
+    } catch (e) {}
+  }
+  function load() {
+    try {
+      var s = localStorage.getItem(KEY);
+      if (!s) return;
+      var arr = JSON.parse(s), i;
+      for (i = 0; i < arr.length; i++) {
+        var red = (arr[i].r || []).slice().sort(function (a, b) { return a - b; });
+        if (red.length !== 6) continue;
+        list.push({ red: red, blue: arr[i].b, time: arr[i].t, ev: arr[i].e || null });
+      }
+      list.sort(function (a, b) { return a.time - b.time; });
+      reevaluate();        /* 兼容旧数据缺评估：统一重算后 save 回写 */
+      save();
+    } catch (e) { list = []; }
+  }
+
+  /* ---------- 交互：摇完自动入列 + 右上角轻提示（5 秒后淡出，不突然消失） ---------- */
+  var noticeTimer = null, fadeTimer = null;
+  function showNotice(rec, idx) {
+    document.getElementById('simPromptTitle').textContent = '已加入模拟结果 #' + (idx + 1);
+    document.getElementById('simPromptBalls').innerHTML = ballsHTML(rec.red, rec.blue, false);
+    document.getElementById('simPromptEval').innerHTML =
+      '<b>' + rec.ev.verdict + ' ' + rec.ev.pass + '/8</b> · 和值 ' + rec.ev.sum +
+      ' · 跨度 ' + rec.ev.span + '<br><span class="hint">点此展开列表查看 8 项形态评估</span>';
+    clearTimeout(noticeTimer); clearTimeout(fadeTimer);
+    var el = document.getElementById('simPrompt');
+    el.classList.remove('out');
+    el.classList.add('on');
+    noticeTimer = setTimeout(hideNotice, 5000);
+  }
+  function hideNotice() {
+    var el = document.getElementById('simPrompt');
+    if (!el.classList.contains('on')) return;
+    el.classList.add('out');
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(function () { el.classList.remove('on', 'out'); }, 480);
+  }
+
+  window.SimLog = {
+    /* 摇完一期直接入列并评估，不再询问 */
+    onDrawComplete: function (red, blue) {
+      var r = red.slice().sort(function (a, b) { return a - b; });
+      var prev = list.length ? list[list.length - 1].red
+        : (window.SSQ_DATA ? window.SSQ_DATA[window.SSQ_DATA.length - 1][1] : null);
+      var rec = { red: r, blue: blue, time: Date.now(), ev: evaluate(r, blue, prev) };
+      list.push(rec);
+      render(); save(); remoteSave();
+      showNotice(rec, list.length - 1);
+    },
+    /* 供跳转选号工具时取内存数据（预览沙箱下 localStorage 可能不可用，数据只在内存里） */
+    snapshot: function () { return list; }
+  };
+
+  document.getElementById('simPrompt').onclick = function (e) {
+    if (e.target.id === 'simPromptX') return;      /* × 自己处理 */
+    hideNotice();
+    document.getElementById('simPanel').classList.remove('collapsed');
+  };
+  document.getElementById('simPromptX').onclick = hideNotice;
+  /* 开始下一期时自动收起上一期的提示，避免挡住摇奖画面 */
+  document.getElementById('startBtn').addEventListener('click', hideNotice);
+
+  document.getElementById('simToggle').onclick = function () {
+    document.getElementById('simPanel').classList.toggle('collapsed');
+  };
+  document.getElementById('simClear').onclick = function () {
+    if (!list.length) return;
+    if (!confirm('清空全部 ' + list.length + ' 条模拟结果？')) return;
+    list = []; render(); save(); remoteSave();
+  };
+  document.getElementById('simList').addEventListener('click', function (e) {
+    var it = e.target.closest('.sim-item');
+    if (it) it.classList.toggle('open');
+  });
+
+  load();
+  render();
+  buildBase();          /* 预热基线，避免第一次入列时卡顿 */
+  remoteLoad();         /* 有本地服务时，把结果文件里的历史记录合并进来 */
+})();
 </script>
 </body>
 </html>

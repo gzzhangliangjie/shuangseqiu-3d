@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>双色球选号工具 · 基于历史分布与蒙特卡洛</title>
+<style>
+:root{
+  --bg:#f7f7f5; --card:#fff; --line:#e3e1da; --line2:#cfccc2;
+  --tx:#2c2c2a; --tx2:#5f5e5a; --tx3:#888780;
+  --red:#e24b4a; --red-d:#a32d2d; --red-l:#fcebeb;
+  --blue:#378add; --blue-d:#185fa5; --blue-l:#e6f1fb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:14px;line-height:1.6}
+.wrap{max-width:1180px;margin:0 auto;padding:24px 20px 60px}
+h1{font-size:20px;font-weight:500;margin:0 0 4px}
+h2{font-size:15px;font-weight:500;margin:0 0 12px;padding-bottom:8px;border-bottom:1px solid var(--line)}
+h3{font-size:14px;font-weight:500;margin:0 0 8px}
+.sub{color:var(--tx2);font-size:13px;margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+.note{background:#fbfaf6;border:1px solid var(--line);border-left:3px solid var(--amber,#ba7517);
+  border-radius:8px;padding:10px 14px;font-size:13px;color:var(--tx2);margin:12px 0}
+.warn{background:var(--red-l);border:1px solid #f09595;border-radius:8px;padding:10px 14px;font-size:13px;color:var(--red-d)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media(max-width:900px){.grid2,.grid4{grid-template-columns:1fr}}
+.metric{background:var(--bg);border-radius:8px;padding:10px 12px}
+.metric .lb{font-size:12px;color:var(--tx2)}
+.metric .vl{font-size:20px;font-weight:500;font-variant-numeric:tabular-nums;margin-top:2px}
+/* 走势图 */
+.trendbox{overflow-x:auto;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#fff}
+.trend{display:grid;width:max-content;gap:0}
+.tc{display:flex;align-items:center;justify-content:center;height:20px;border-bottom:1px solid rgba(0,0,0,.04);font-size:11px;font-variant-numeric:tabular-nums}
+.tc.hd{background:var(--bg);color:var(--tx3)}
+.tc.zr{background:var(--red-l);color:var(--red-d)}
+.tc.zb{background:var(--blue-l);color:var(--blue-d)}
+.tc.sum{background:var(--bg);border-left:1px solid var(--line2);border-right:1px solid var(--line2);color:var(--tx2)}
+.tc.iss{color:var(--tx2);justify-content:flex-start;padding-left:2px}
+.ball{display:flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;color:#fff;font-size:11px;font-variant-numeric:tabular-nums}
+.ball.r{background:var(--red)} .ball.b{background:var(--blue)}
+.mi{color:#b4b2a9}
+/* 控件 */
+.row{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.row label{font-size:13px;color:var(--tx2);min-width:86px}
+input[type=range]{flex:1;min-width:120px;max-width:260px}
+input[type=number],input[type=text]{border:1px solid var(--line2);border-radius:6px;padding:4px 8px;font-size:13px;width:88px;background:#fff;color:var(--tx)}
+.val{font-variant-numeric:tabular-nums;color:var(--tx);font-size:13px;min-width:52px}
+button{background:var(--red);color:#fff;border:0;border-radius:8px;padding:9px 20px;font-size:14px;cursor:pointer;font-family:inherit}
+button:hover{background:#d13f3e}
+button.gh{background:transparent;color:var(--tx2);border:1px solid var(--line2)}
+button.gh:hover{background:var(--bg);color:var(--tx)}
+.chk{display:flex;align-items:center;gap:5px;font-size:13px;color:var(--tx2)}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:8px;overflow:hidden}
+.seg button{border-radius:0;padding:6px 14px;background:transparent;color:var(--tx2);font-size:13px}
+.seg button.on{background:var(--blue);color:#fff}
+/* 结果 */
+.pick{display:flex;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.pick:last-child{border-bottom:0}
+.nums{display:flex;gap:6px;align-items:center;flex:0 0 auto}
+.pmeta{font-size:12px;color:var(--tx2);flex:1;min-width:240px;line-height:1.5}
+.tag{display:inline-block;background:var(--bg);border-radius:4px;padding:1px 6px;font-size:11px;color:var(--tx2);margin:1px 3px 1px 0}
+.tag.ok{background:#eaf3de;color:#3b6d11}
+.score{font-variant-numeric:tabular-nums;font-size:13px;color:var(--tx2);min-width:70px;text-align:right}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th{color:var(--tx2);font-weight:500;font-size:12px}
+.chartbox{position:relative;height:260px}
+.chartbox.sm{height:210px}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--tx2);margin-bottom:8px}
+.legend span.k{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
+footer{color:var(--tx3);font-size:12px;text-align:center;margin-top:32px;line-height:1.8}
+code{background:var(--bg);border-radius:4px;padding:1px 5px;font-size:12px}
+/* 3D 摇奖机结果（与 3D 页共享 localStorage） */
+.s3d-item{border-bottom:1px solid var(--line);padding:10px 0;cursor:pointer}
+.s3d-item:last-child{border-bottom:0}
+.s3d-hd{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--tx2)}
+.s3d-hd b{color:var(--tx);font-size:13px}
+.s3d-badge{border-radius:10px;padding:1px 9px;font-size:11.5px;font-weight:500}
+.s3d-badge.good{background:#eaf3de;color:#3b6d11}
+.s3d-badge.mid{background:#fdf1d8;color:#8a5c05}
+.s3d-badge.bad{background:var(--red-l);color:var(--red-d)}
+.ball.lg{width:26px;height:26px;font-size:12.5px}
+.s3d-tb{display:none;margin-top:8px;font-size:12.5px}
+.s3d-item.open .s3d-tb{display:table}
+.s3d-tb td{padding:4px 8px}
+.s3d-tb td:first-child{color:var(--tx2);width:64px}
+.s3d-tb td.ok{color:#3b6d11}
+.s3d-tb td.no{color:var(--red-d)}
+.s3d-tb td:last-child{color:var(--tx3);text-align:right;font-size:11.5px}
+.s3d-empty{color:var(--tx3);font-size:13px;padding:10px 0;line-height:1.8}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>双色球选号工具</h1>
+<p class="sub">历史形态分布 + 蒙特卡洛加权采样 + 硬约束缩水 + 多注去冗余 · 全部计算在浏览器本地完成</p>
+<div style="margin:-10px 0 18px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+  <button class="gh" id="lnkMachine">← 打开 3D 摇奖机</button>
+  <a href="#cardSim3d" style="font-size:13px;color:var(--blue-d);text-decoration:none">
+    3D 摇奖结果 <b id="sim3dBadge">0</b> 条 ↓</a>
+</div>
+
+<div class="card">
+  <div id="overview" class="grid4"></div>
+  <div class="note" id="honest"></div>
+</div>
+
+<div class="card">
+  <h2>综合走势图</h2>
+  <div class="row">
+    <label>显示期数</label>
+    <div class="seg" id="segN">
+      <button data-n="20">20 期</button><button data-n="40" class="on">40 期</button>
+      <button data-n="80">80 期</button><button data-n="150">150 期</button>
+    </div>
+    <span style="flex:1"></span>
+    <span class="chk"><input type="checkbox" id="cbLine" checked> 显示和值列</span>
+  </div>
+  <div class="legend">
+    <span><span class="k" style="background:var(--red)"></span>红球出号</span>
+    <span><span class="k" style="background:var(--blue)"></span>蓝球出号</span>
+    <span><span class="k" style="background:#d3d1c7"></span>未出（淡灰数字）</span>
+    <span>底部两行：本窗口出现次数 / 当前遗漏</span>
+  </div>
+  <div class="trendbox"><div class="trend" id="trend"></div></div>
+</div>
+
+<div class="card">
+  <h2>号码频次分布</h2>
+  <div class="grid2">
+    <div>
+      <h3 style="color:var(--red-d)">红球 01–33</h3>
+      <div class="legend"><span><span class="k" style="background:var(--red)"></span>高于均值</span><span><span class="k" style="background:var(--red-l);border:0.5px solid var(--red-d)"></span>低于均值</span><span><span class="k" style="background:#888780"></span>理论均值线</span></div>
+      <div class="chartbox"><canvas id="cRed"></canvas></div>
+    </div>
+    <div>
+      <h3 style="color:var(--blue-d)">蓝球 01–16</h3>
+      <div class="legend"><span><span class="k" style="background:var(--blue)"></span>高于均值</span><span><span class="k" style="background:var(--blue-l);border:0.5px solid var(--blue-d)"></span>低于均值</span><span><span class="k" style="background:#888780"></span>理论均值线</span></div>
+      <div class="chartbox"><canvas id="cBlue"></canvas></div>
+    </div>
+  </div>
+  <p class="note" style="margin-top:14px">
+    纵轴不从 0 起（红球 300 起、蓝球 100 起），用于放大差异 —— 请留意柱子之间的实际差距只有百分之几。
+    实测：红球频次标准差 <b>24.2</b> vs 理论 <b>17.6</b>（比值 1.37，蒙特卡洛 p≈0.004），
+    说明号码存在<b>微弱的真实偏置</b>；但偏置估计量（约 4.5%）与 2083 期数据的估计噪声（约 4.65%）几乎相等，
+    <b>信噪比≈1，无法可靠识别哪些号偏热</b>。
+  </p>
+</div>
+
+<div class="card">
+  <h2>形态分布</h2>
+  <div class="grid2">
+    <div><h3>和值分布</h3><div class="chartbox sm"><canvas id="cSum"></canvas></div></div>
+    <div><h3>奇数个数 / 大号个数 / 一区个数</h3><div class="chartbox sm"><canvas id="cShape"></canvas></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>选号</h2>
+  <div class="grid2">
+    <div>
+      <div class="row">
+        <label>α 倾斜强度</label>
+        <input type="range" id="rgA" min="0" max="1" step="0.05" value="0.35">
+        <span class="val" id="vA">0.35</span>
+      </div>
+      <p class="sub" style="margin:0 0 12px;font-size:12px">
+        0 = 纯机选（每个号等概率），1 = 完全跟随历史统计。默认 0.35 吃到一点真信号又不被噪声主导。
+      </p>
+      <div class="row">
+        <label>近期窗口</label>
+        <input type="range" id="rgW" min="30" max="1500" step="30" value="600">
+        <span class="val" id="vW">600 期</span>
+      </div>
+      <div class="row">
+        <label>推荐注数</label>
+        <input type="range" id="rgK" min="1" max="20" step="1" value="5">
+        <span class="val" id="vK">5 注</span>
+      </div>
+      <div class="row">
+        <label>候选规模</label>
+        <div class="seg" id="segC">
+          <button data-c="30000">3 万（快）</button>
+          <button data-c="100000" class="on">10 万</button>
+          <button data-c="300000">30 万（慢）</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>多注策略</label>
+        <div class="seg" id="segD">
+          <button data-d="2">极分散（交集≤2）</button>
+          <button data-d="3" class="on">分散（交集≤3）</button>
+          <button data-d="4">集中（交集≤4）</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>单号最多出现</label>
+        <div class="seg" id="segCap">
+          <button data-v="1">1 次</button><button data-v="2" class="on">2 次</button>
+          <button data-v="3">3 次</button><button data-v="99">不限</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>胆码</label><input type="text" id="inDan" placeholder="如 08,14">
+        <label style="min-width:0">杀号</label><input type="text" id="inKill" placeholder="如 21,33">
+      </div>
+    </div>
+    <div>
+      <h3>硬约束（缩水条件）</h3>
+      <div class="row"><span class="chk"><input type="checkbox" id="hSum" checked></span>
+        和值 <input type="number" id="sumLo" value="80"> – <input type="number" id="sumHi" value="130"></div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hOdd" checked></span> 奇数个数 2–4</div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hBig" checked></span> 大号(≥17)个数 2–4</div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hZone" checked></span> 一区(1–11)个数 1–3</div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hRep" checked></span> 与上期重号 ≤ <input type="number" id="repMax" value="3"></div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hCon" checked></span> 连号组数 ≤ <input type="number" id="conMax" value="2"></div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hTail" checked></span> 尾数组数 ≥ <input type="number" id="tailMin" value="4"></div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hAc" checked></span> AC 值 ≥ <input type="number" id="acMin" value="5"></div>
+      <div class="row"><span class="chk"><input type="checkbox" id="hSpan" checked></span> 跨度 15 – 31</div>
+      <div class="row" style="margin-top:14px">
+        <button id="btnGen">生成推荐</button>
+        <button class="gh" id="btnRand">对照：纯机选</button>
+        <span class="val" id="genInfo"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>推荐结果</h2>
+  <div id="picks"></div>
+  <div class="warn" style="margin-top:16px">
+    以上号码不提高任何奖级的数学期望。一等奖概率恒为 1/17,721,088，本工具的价值仅在于：<b>纠偏</b>（避开全奇全偶、和值离谱等人为偏误）、<b>分散</b>（多注不雷同）、<b>可复现</b>。
+    请量力而行，未成年人不得购彩。
+  </div>
+  <div class="row" style="margin-top:14px">
+    <label style="min-width:auto">批量生成</label>
+    <input type="number" id="bgN" value="10" min="1" max="200" style="width:70px"> 期
+    <button class="gh" id="btnBatch">自动生成多期</button>
+    <button class="gh" id="btnCopy">复制为文本</button>
+    <span class="val" id="bgInfo"></span>
+  </div>
+  <div id="batchOut"></div>
+</div>
+
+<div class="card" id="cardSim3d">
+  <h2>3D 摇奖机结果 <span class="val" id="sim3dCount"></span></h2>
+  <div class="row">
+    <button class="gh" id="btnSim3dRefresh">刷新结果</button>
+    <button class="gh" id="lnkSim3dGo">打开 3D 摇奖机 →</button>
+    <span class="val" id="sim3dInfo"></span>
+  </div>
+  <div id="sim3dList"></div>
+  <p class="note">
+    这里列出的是 <b>3D 物理摇奖机</b>每期摇出并自动入列的号码，持久保存在项目根目录的
+    <code>sim3d_results.json</code>（由 <code>node picker/sim_server.js</code> 的
+    <code>/api/sim3d</code> 接口读写，两页共用这一个文件，换浏览器/刷新都不会丢）。
+    与下方「模拟摇奖」是两套独立数据——下方是 <code>sim_real.js</code> 在选号页内快速批量仿真，只存在内存中。<br>
+    点击任一条可展开 8 项形态评估；评估口径基于 2083 期真实开奖，只描述形态、不改变中奖概率。
+  </p>
+</div>
+
+<div class="card">
+  <h2>模拟摇奖 · 物理摇奖机对接</h2>
+  <div class="note" id="simState">正在检测物理摇奖服务…</div>
+  <div class="row" style="margin-top:10px">
+    <button id="btnDraw1">摇 1 期</button>
+    <button id="btnAuto">自动连续摇</button>
+    <button class="gh" id="btnStop" disabled>停止</button>
+    <label style="min-width:auto">间隔</label>
+    <input type="number" id="simGap" value="3" min="1" max="60" style="width:64px"> 秒
+    <label style="min-width:auto">对照期数</label>
+    <input type="number" id="simN" value="100" min="10" max="1000" step="10" style="width:76px">
+    <span class="chk"><input type="checkbox" id="cbPer"> 逐期对打（用上方批量生成的号码）</span>
+    <button class="gh" id="btnVerify">推荐 vs 机选 对照验证</button>
+    <span class="val" id="simInfo"></span>
+  </div>
+  <div id="simOut" style="margin-top:12px"></div>
+  <div id="simCmp" style="margin-top:12px"></div>
+  <p class="note">
+    摇奖来源是本工作区的 <code>sim_real.js</code>——完整球壳 + 环形预览架 → 双转子搅拌 → 底部小孔出球 → 滑道排队 的刚体物理仿真，
+    <b>不含任何号码预设</b>，出号完全由碰撞与重力决定（约 1 秒/期）。这正是它作为对照组的价值：
+    如果选号规则在物理摇奖下的表现和纯机选没有区别，就说明规则没有信息量。
+  </p>
+</div>
+
+<div class="card">
+  <h2>方法与已知结论</h2>
+  <table>
+    <tr><th style="width:180px">检验项</th><th>结果</th><th>判读</th></tr>
+    <tr><td>红球均匀性</td><td>χ²=50.9 (df=32)，σ 比值 1.37</td><td>蒙特卡洛 p≈0.004 → 存在微弱真实偏置</td></tr>
+    <tr><td>蓝球均匀性</td><td>χ²=14.2 (df=15)</td><td>完全均匀，无偏置</td></tr>
+    <tr><td>固定偏置一致性</td><td>4 段 ANOVA F=2.014</td><td>蒙特卡洛 p≈0.008 → 偏置跨年一致（球/机公差）</td></tr>
+    <tr><td>逐年 σ 比值</td><td>0.81 ~ 1.22，无一年达 1.37</td><td>佐证：跨年累积的一致偏置</td></tr>
+    <tr><td>物理仿真基准</td><td>600 次，σ 比值 0.87，χ²=19.7</td><td>理想摇奖机均匀 → 异常来自真机</td></tr>
+    <tr><td><b>信噪比</b></td><td><b>偏置 4.5% ÷ 噪声 4.65% ≈ 0.97</b></td><td><b>信号等于噪声，无法可靠利用</b></td></tr>
+    <tr><td>热冷号延续性</td><td>热号 +0.5%，冷号 −4.8%，r=0.287</td><td>两段分割检验功效不足，仅作参考</td></tr>
+  </table>
+  <p class="note" style="margin-top:12px">
+    数据来源：中国福利彩票官网 <code>cwl.gov.cn</code>，2013001 – 2026125 共 2083 期，抓取于 2026-11-03。
+    选号算法：单球权重（指数衰减频次 × 遗漏回补，封顶）× α 混合均匀分布 → Efraimidis-Spirakis 加权无放回采样 → 硬约束过滤 → 历史概率对数评分 → 贪心去冗余。
+  </p>
+</div>
+
+<footer>
+  本工具不宣称预测能力、不提供收费荐号、不对接任何投注接口。<br>
+  彩票返奖率约 50%，长期投入必然亏损。理性购彩，量力而行。
+</footer>
+
+</div>
+
+<script src="data.js"></script>
+<!-- 物理摇奖内核：与 sim_real.js 同一份文件，浏览器直接加载即免启动 Node 服务 -->
+<script src="../sim_real.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+(function(){
+"use strict";
+var D = window.SSQ_DATA || [];
+if(!D.length){ document.getElementById('picks').innerHTML='<p class="warn">未找到 data.js，请先生成数据文件。</p>'; return; }
+D = D.slice().sort(function(a,b){return a[0]-b[0];});
+var N = D.length, LAST = D[N-1];
+var HAS_CHART = (typeof Chart !== 'undefined');
+
+/* ---------- 统计 ---------- */
+var freqR = new Array(34).fill(0), freqB = new Array(17).fill(0);
+D.forEach(function(r){ r[1].forEach(function(n){freqR[n]++;}); freqB[r[2]]++; });
+var lastSeenR = new Array(34).fill(-1), lastSeenB = new Array(17).fill(-1);
+D.forEach(function(r,i){ r[1].forEach(function(n){lastSeenR[n]=i;}); lastSeenB[r[2]]=i; });
+var missR = [], missB = [];
+for(var i=1;i<=33;i++) missR[i] = N-1-lastSeenR[i];
+for(var i=1;i<=16;i++) missB[i] = N-1-lastSeenB[i];
+
+function cnt(arr,len){var c=new Array(len+1).fill(0);arr.forEach(function(v){c[v]++;});return c;}
+
+/* 历史形态分布（用于软评分） */
+var dist = {};
+function buildDist(){
+  dist.sum={}; dist.span={}; dist.odd={}; dist.big={}; dist.z1={};
+  dist.rep={}; dist.con={}; dist.tail={};
+  D.forEach(function(r){
+    var red=r[1], s=0; red.forEach(function(n){s+=n;});
+    var sum=Math.floor(s/10)*10;
+    dist.sum[sum]=(dist.sum[sum]||0)+1;
+    var sp=Math.floor((red[5]-red[0])/3)*3;
+    dist.span[sp]=(dist.span[sp]||0)+1;
+    var o=red.filter(function(n){return n%2;}).length; dist.odd[o]=(dist.odd[o]||0)+1;
+    var b=red.filter(function(n){return n>=17;}).length; dist.big[b]=(dist.big[b]||0)+1;
+    var z=red.filter(function(n){return n<=11;}).length; dist.z1[z]=(dist.z1[z]||0)+1;
+    var c=consecGroups(red); dist.con[c]=(dist.con[c]||0)+1;
+    var t=new Set(red.map(function(n){return n%10;})).size; dist.tail[t]=(dist.tail[t]||0)+1;
+  });
+  for(var i=1;i<N;i++){
+    var a=new Set(D[i-1][1]), n=0;
+    D[i][1].forEach(function(x){if(a.has(x))n++;});
+    dist.rep[n]=(dist.rep[n]||0)+1;
+  }
+}
+function P(obj,k){ return ((obj[k]||0)+1)/(Object.values(obj).reduce(function(a,b){return a+b;},0)+Object.keys(obj).length+8); }
+
+function consecGroups(red){
+  var g=0,c=1;
+  for(var i=1;i<red.length;i++){
+    if(red[i]===red[i-1]+1) c++; else { if(c>=2)g++; c=1; }
+  }
+  if(c>=2)g++;
+  return g;
+}
+function acValue(red){
+  var s=new Set();
+  for(var i=0;i<6;i++)for(var j=i+1;j<6;j++) s.add(red[j]-red[i]);
+  return s.size-5;
+}
+
+/* ---------- 权重 ---------- */
+function buildWeights(alpha, win){
+  var half = Math.max(60, Math.round(win/3)), lam = Math.log(2)/half;
+  var upto = Math.max(0, N-win), wR=new Array(34).fill(0), wB=new Array(17).fill(0);
+  for(var i=upto;i<N;i++){
+    var age=N-1-i, wt=Math.exp(-lam*age);
+    D[i][1].forEach(function(n){ wR[n]+=wt; });
+    wB[D[i][2]]+=wt;
+  }
+  var tot=0; for(var n=1;n<=33;n++) tot+=wR[n];
+  var totB=0; for(var n=1;n<=16;n++) totB+=(wB[n]||0);
+  var AM=33/6, sR={}, sB={}, sumR=0, sumB=0;
+  for(var n=1;n<=33;n++){
+    var ff = (wR[n]+0.5)/((tot/33)+0.5);
+    var ratio = Math.min(missR[n]/AM, 2.5);
+    var fm = 0.7 + 0.7*ratio/2.5;
+    var s = ff*fm; sR[n]=s; sumR+=s;
+  }
+  for(var n=1;n<=16;n++){
+    var ff = ((wB[n]||0)+0.5)/((totB/16)+0.5);
+    var ratio = Math.min(missB[n]/(16/1), 2.5);
+    var fm = 0.7 + 0.7*ratio/2.5;
+    var s = ff*fm; sB[n]=s; sumB+=s;
+  }
+  var pR={}, pB={};
+  for(var n=1;n<=33;n++) pR[n] = (1-alpha)/33 + alpha*(sR[n]/sumR);
+  for(var n=1;n<=16;n++) pB[n] = (1-alpha)/16 + alpha*(sB[n]/sumB);
+  return {pR:pR,pB:pB};
+}
+
+/* ---------- 采样 ---------- */
+function sampleRed(pR){
+  var arr=[];
+  for(var n=1;n<=33;n++){
+    var u=Math.random(); if(u<1e-12) u=1e-12;
+    arr.push([n, Math.log(u)/pR[n]]);
+  }
+  arr.sort(function(a,b){return b[1]-a[1];});
+  return arr.slice(0,6).map(function(x){return x[0];}).sort(function(a,b){return a-b;});
+}
+function sampleBlue(pB){
+  var r=Math.random(), acc=0;
+  var tot=0; for(var n=1;n<=16;n++) tot+=pB[n];
+  for(var n=1;n<=16;n++){ acc+=pB[n]/tot; if(r<=acc) return n; }
+  return 16;
+}
+
+/* ---------- 特征 ---------- */
+function feat(red, blue){
+  var s=0; red.forEach(function(n){s+=n;});
+  var o=0,bg=0,z1=0,tails=new Set(),c=0;
+  red.forEach(function(n){ if(n%2)o++; if(n>=17)bg++; if(n<=11)z1++; tails.add(n%10); });
+  var prev=new Set(LAST[1]), rep=0;
+  red.forEach(function(n){ if(prev.has(n))rep++; });
+  return {
+    sum:s, span:red[5]-red[0], odd:o, big:bg, z1:z1,
+    tail:tails.size, rep:rep, con:consecGroups(red), ac:acValue(red), blue:blue
+  };
+}
+
+/* ---------- 约束 ---------- */
+function cfg(){
+  return {
+    hSum:document.getElementById('hSum').checked,
+    sumLo:+document.getElementById('sumLo').value, sumHi:+document.getElementById('sumHi').value,
+    hOdd:document.getElementById('hOdd').checked,
+    hBig:document.getElementById('hBig').checked,
+    hZone:document.getElementById('hZone').checked,
+    hRep:document.getElementById('hRep').checked, repMax:+document.getElementById('repMax').value,
+    hCon:document.getElementById('hCon').checked, conMax:+document.getElementById('conMax').value,
+    hTail:document.getElementById('hTail').checked, tailMin:+document.getElementById('tailMin').value,
+    hAc:document.getElementById('hAc').checked, acMin:+document.getElementById('acMin').value,
+    hSpan:document.getElementById('hSpan').checked
+  };
+}
+function pass(f,c,dan,kill){
+  if(dan) for(var i=0;i<dan.length;i++) if(f._red.indexOf(dan[i])<0) return false;
+  if(kill) for(var i=0;i<kill.length;i++) if(f._red.indexOf(kill[i])>=0) return false;
+  if(c.hSum && (f.sum<c.sumLo||f.sum>c.sumHi)) return false;
+  if(c.hOdd && (f.odd<2||f.odd>4)) return false;
+  if(c.hBig && (f.big<2||f.big>4)) return false;
+  if(c.hZone && (f.z1<1||f.z1>3)) return false;
+  if(c.hRep && f.rep>c.repMax) return false;
+  if(c.hCon && f.con>c.conMax) return false;
+  if(c.hTail && f.tail<c.tailMin) return false;
+  if(c.hAc && f.ac<c.acMin) return false;
+  if(c.hSpan && (f.span<15||f.span>31)) return false;
+  return true;
+}
+function score(f, W){
+  var s=0;
+  s+=Math.log(P(dist.sum, Math.floor(f.sum/10)*10));
+  s+=Math.log(P(dist.span, Math.floor(f.span/3)*3));
+  s+=Math.log(P(dist.odd, f.odd));
+  s+=Math.log(P(dist.big, f.big));
+  s+=Math.log(P(dist.z1, f.z1));
+  s+=Math.log(P(dist.rep, f.rep));
+  s+=Math.log(P(dist.con, f.con));
+  s+=Math.log(P(dist.tail, f.tail));
+  if(W){
+    f._red.forEach(function(n){ s+=Math.log(W.pR[n]*33); });
+    s+=Math.log(W.pB[f.blue]*16);
+  }
+  return s;
+}
+
+/* ---------- 生成 ---------- */
+function generate(opt){
+  var c=opt.cfg, W=buildWeights(opt.alpha, opt.win);
+  var pool=[], tries=opt.cand, hit=0, sMin=1e9, sMax=-1e9;
+  for(var t=0;t<tries;t++){
+    var red=sampleRed(W.pR), blue=sampleBlue(W.pB);
+    var f=feat(red,blue); f._red=red;
+    if(!pass(f,c,opt.dan,opt.kill)) continue;
+    var sc=score(f,W);
+    if(sc>sMax)sMax=sc; if(sc<sMin)sMin=sc;
+    pool.push({red:red,blue:blue,f:f,s:sc});
+    hit++;
+    if(pool.length>60000) break;
+  }
+  pool.sort(function(a,b){return b.s-a.s;});
+  var out=[], maxOv=opt.maxOv, cap=opt.cap, used={};
+  function overlapOk(p){
+    for(var j=0;j<out.length;j++){
+      var ov=0, s2=new Set(out[j].red);
+      p.red.forEach(function(n){ if(s2.has(n))ov++; });
+      if(ov>maxOv) return false;
+    }
+    return true;
+  }
+  function capOk(p){
+    if(cap>=99) return true;
+    for(var i=0;i<p.red.length;i++) if((used[p.red[i]]||0)>=cap) return false;
+    return true;
+  }
+  function adopt(p){ p.red.forEach(function(n){ used[n]=(used[n]||0)+1; }); out.push(p); }
+  for(var i=0;i<pool.length && out.length<opt.k;i++)
+    if(overlapOk(pool[i]) && capOk(pool[i])) adopt(pool[i]);
+  if(out.length<opt.k){ cap=99;
+    for(var i=0;i<pool.length && out.length<opt.k;i++)
+      if(out.indexOf(pool[i])<0 && overlapOk(pool[i])) out.push(pool[i]);
+  }
+  return {picks:out, tried:tries, passed:hit, sMin:sMin, sMax:sMax};
+}
+
+/* ---------- 渲染：走势图 ---------- */
+var trendN = 40;
+function renderTrend(){
+  var n=Math.min(trendN,N), rows=D.slice(N-n), g=document.getElementById('trend');
+  var showSum=document.getElementById('cbLine').checked;
+  var cols='72px repeat(33,20px)'+(showSum?' 38px':'')+' repeat(16,20px)';
+  g.style.gridTemplateColumns=cols;
+  function pad(x){return x<10?'0'+x:''+x;}
+  function cell(html,ex){return '<div class="tc '+(ex||'')+'">'+html+'</div>';}
+  var h='';
+  h+=cell('期号','hd iss');
+  for(var i=1;i<=33;i++) h+=cell(pad(i),'hd zr');
+  if(showSum) h+=cell('和值','hd sum');
+  for(var i=1;i<=16;i++) h+=cell(pad(i),'hd zb');
+  rows.forEach(function(r){
+    h+=cell(r[0],'iss');
+    var set=new Set(r[1]), s=0; r[1].forEach(function(x){s+=x;});
+    for(var i=1;i<=33;i++) h+=cell(set.has(i)?'<span class="ball r">'+pad(i)+'</span>':'<span class="mi">'+pad(i)+'</span>');
+    if(showSum) h+=cell(s,'sum');
+    for(var i=1;i<=16;i++) h+=cell(r[2]===i?'<span class="ball b">'+pad(i)+'</span>':'<span class="mi">'+pad(i)+'</span>');
+  });
+  var cR=new Array(34).fill(0), cB=new Array(17).fill(0);
+  rows.forEach(function(r){ r[1].forEach(function(x){cR[x]++;}); cB[r[2]]++; });
+  h+=cell('出现','hd iss');
+  for(var i=1;i<=33;i++) h+=cell(cR[i],'hd zr');
+  if(showSum) h+=cell('','hd sum');
+  for(var i=1;i<=16;i++) h+=cell(cB[i],'hd zb');
+  h+=cell('当前遗漏','hd iss');
+  for(var i=1;i<=33;i++) h+=cell(missR[i],'hd zr');
+  if(showSum) h+=cell('','hd sum');
+  for(var i=1;i<=16;i++) h+=cell(missB[i],'hd zb');
+  g.innerHTML=h;
+}
+
+/* ---------- 渲染：图表 ---------- */
+function mkChart(id,labels,data,mean,color,lo,hi,step,label){
+  if(!HAS_CHART) return;
+  var el=document.getElementById(id); if(!el) return;
+  if(mkChart['_'+id]) mkChart['_'+id].destroy();
+  var meanArr=data.map(function(){return mean;});
+  mkChart['_'+id]=new Chart(el,{
+    type:'bar',
+    data:{labels:labels,datasets:[
+      {label:label,data:data,order:2,borderRadius:2,borderWidth:0.5,borderColor:color.d,
+       backgroundColor:data.map(function(v){return v>=mean?color.m:color.l;})},
+      {type:'line',label:'理论均值',data:meanArr,order:1,borderColor:'#888780',borderWidth:1.5,
+       borderDash:[5,4],pointRadius:0,fill:false}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:function(c){
+        return c.dataset.type==='line'?('理论均值 '+mean.toFixed(1)):(label+' '+c.parsed.y+' 次');}}}},
+      scales:{x:{ticks:{color:'#888780',maxRotation:0,autoSkip:data.length>16,maxTicksLimit:17},grid:{display:false}},
+              y:{min:lo,max:hi,ticks:{color:'#888780',stepSize:step},grid:{color:'rgba(0,0,0,.07)'}}}}
+  });
+}
+function renderCharts(){
+  var lr=[],lb=[],dr=[],db=[];
+  for(var i=1;i<=33;i++){lr.push(i);dr.push(freqR[i]);}
+  for(var i=1;i<=16;i++){lb.push(i);db.push(freqB[i]);}
+  mkChart('cRed',lr,dr,N*6/33,{m:'#e24b4a',d:'#a32d2d',l:'#fcebeb'},300,440,35,'出现');
+  mkChart('cBlue',lb,db,N/16,{m:'#378add',d:'#185fa5',l:'#e6f1fb'},100,160,15,'出现');
+  /* 和值直方图 */
+  var sb={},keys=[];
+  D.forEach(function(r){var s=0;r[1].forEach(function(x){s+=x;});var k=Math.floor(s/10)*10;sb[k]=(sb[k]||0)+1;});
+  for(var k=60;k<=170;k+=10) keys.push(k);
+  if(HAS_CHART){
+    if(mkChart._cSum) mkChart._cSum.destroy();
+    mkChart._cSum=new Chart(document.getElementById('cSum'),{type:'bar',
+      data:{labels:keys,datasets:[{data:keys.map(function(k){return sb[k]||0;}),
+        backgroundColor:'#f09595',borderColor:'#a32d2d',borderWidth:0.5,borderRadius:2}]},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:function(c){return c.parsed.y+' 期';}}}},
+        scales:{x:{ticks:{color:'#888780',maxRotation:0,autoSkip:false},grid:{display:false},title:{display:true,text:'和值区间',color:'#888780',font:{size:11}}},
+                y:{ticks:{color:'#888780'},grid:{color:'rgba(0,0,0,.07)'}}}}});
+    if(mkChart._cShape) mkChart._cShape.destroy();
+    var oc=[0,0,0,0,0,0,0],bc=[0,0,0,0,0,0,0],zc=[0,0,0,0,0,0,0];
+    D.forEach(function(r){
+      oc[r[1].filter(function(n){return n%2;}).length]++;
+      bc[r[1].filter(function(n){return n>=17;}).length]++;
+      zc[r[1].filter(function(n){return n<=11;}).length]++;
+    });
+    mkChart._cShape=new Chart(document.getElementById('cShape'),{type:'bar',
+      data:{labels:['0','1','2','3','4','5','6'],datasets:[
+        {label:'奇数个数',data:oc,backgroundColor:'#e24b4a'},
+        {label:'大号个数',data:bc,backgroundColor:'#378add'},
+        {label:'一区个数',data:zc,backgroundColor:'#97c459'}]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:true,labels:{color:'#5f5e5a',boxWidth:10,font:{size:11}}},
+          tooltip:{callbacks:{label:function(c){return c.dataset.label+': '+(c.parsed.y/N*100).toFixed(1)+'%';}}}},
+        scales:{x:{ticks:{color:'#888780'},grid:{display:false}},
+                y:{ticks:{color:'#888780',callback:function(v){return (v/N*100).toFixed(0)+'%';}},grid:{color:'rgba(0,0,0,.07)'}}}}});
+  }
+}
+
+/* ---------- 渲染：概览 ---------- */
+function renderOverview(){
+  var m='';
+  m+='<div class="metric"><div class="lb">历史期数</div><div class="vl">'+N+'</div></div>';
+  m+='<div class="metric"><div class="lb">期号范围</div><div class="vl" style="font-size:15px">'+D[0][0]+' – '+LAST[0]+'</div></div>';
+  m+='<div class="metric"><div class="lb">上期开奖</div><div class="vl" style="font-size:14px">'+
+      LAST[1].map(function(n){return n<10?'0'+n:''+n;}).join(' ')+' + '+(LAST[2]<10?'0'+LAST[2]:LAST[2])+'</div></div>';
+  m+='<div class="metric"><div class="lb">固定偏置信噪比</div><div class="vl">≈ 0.97</div></div>';
+  document.getElementById('overview').innerHTML=m;
+  document.getElementById('honest').innerHTML =
+    '<b>先说结论：</b>实测确认红球存在微弱但统计显著的非均匀性（蒙特卡洛 p≈0.004，4 段 ANOVA p≈0.008），'+
+    '来自真机球/机公差；但偏置量（约 4.5%）与 2083 期数据的估计噪声（约 4.65%）几乎相等，'+
+    '<b>信噪比≈1，无法可靠识别偏热号码</b>。所以本工具的 α 默认 0.35 —— 轻微倾斜，不追热号。';
+}
+
+/* ---------- 渲染：结果 ---------- */
+function renderPicks(res,title){
+  var h='<h3 style="color:var(--tx2);font-weight:400;margin-bottom:8px">'+title+
+        '　<span style="font-size:12px;color:var(--tx3)">（候选 '+res.tried.toLocaleString()+
+        ' 注，通过硬约束 '+res.passed.toLocaleString()+' 注）</span></h3>';
+  if(!res.picks.length){ h+='<p class="warn">没有号码同时满足全部硬约束，请放宽条件（例如取消 AC 值或尾数限制）。</p>'; }
+  res.picks.forEach(function(p,idx){
+    var ns=p.red.map(function(n){return '<span class="ball r">'+(n<10?'0'+n:''+n)+'</span>';}).join('');
+    ns+='<span style="margin-left:6px" class="ball b">'+(p.blue<10?'0'+p.blue:p.blue)+'</span>';
+    var tags=[];
+    function tg(t,ok){ return '<span class="tag'+(ok?' ok':'')+'">'+t+'</span>'; }
+    tags.push(tg('和值 '+p.f.sum, p.f.sum>=80&&p.f.sum<=130));
+    tags.push(tg('奇偶 '+(6-p.f.odd)+':'+p.f.odd, p.f.odd>=2&&p.f.odd<=4));
+    tags.push(tg('大小 '+(6-p.f.big)+':'+p.f.big, p.f.big>=2&&p.f.big<=4));
+    tags.push(tg('跨度 '+p.f.span, p.f.span>=15&&p.f.span<=31));
+    tags.push(tg('重号 '+p.f.rep, p.f.rep<=3));
+    tags.push(tg('连号 '+p.f.con+' 组', p.f.con<=2));
+    tags.push(tg('尾数 '+p.f.tail+' 组', p.f.tail>=4));
+    tags.push(tg('AC '+p.f.ac, p.f.ac>=5));
+    var norm = res.sMax>res.sMin ? Math.round((p.s-res.sMin)/(res.sMax-res.sMin)*100) : 100;
+    h+='<div class="pick"><div class="nums">'+ns+'</div>'+
+       '<div class="pmeta">'+tags.join('')+'</div>'+
+       '<div class="score">贴合度 '+norm+'</div></div>';
+  });
+  document.getElementById('picks').innerHTML=h;
+}
+
+/* ---------- 交互 ---------- */
+function parseNums(s,max){
+  if(!s) return null;
+  var a=s.split(/[,，\s]+/).map(function(x){return parseInt(x,10);})
+        .filter(function(x){return x>=1&&x<=max;});
+  return a.length?a:null;
+}
+var cand=100000, maxOv=3, capUse=2;
+var PICKS={rec:[],rand:[]};   /* 注意：LAST 已被占用（= 最后一期开奖），此处必须另取名 */
+function doGen(randomMode){
+  var t0=performance.now();
+  var alpha = randomMode?0:+document.getElementById('rgA').value;
+  var res=generate({
+    alpha:alpha, win:+document.getElementById('rgW').value,
+    cand:cand, k:+document.getElementById('rgK').value, maxOv:maxOv, cap:capUse,
+    cfg:cfg(),
+    dan:parseNums(document.getElementById('inDan').value,33),
+    kill:parseNums(document.getElementById('inKill').value,33)
+  });
+  renderPicks(res, randomMode?'对照组：纯机选（α=0，不加任何统计倾斜）':'推荐号码（α='+alpha.toFixed(2)+'）');
+  document.getElementById('genInfo').textContent='耗时 '+Math.round(performance.now()-t0)+' ms';
+  if(randomMode) PICKS.rand=res.picks; else { PICKS.rec=res.picks; PICKS.alpha=alpha; }
+}
+document.getElementById('btnGen').onclick=function(){doGen(false);};
+document.getElementById('btnRand').onclick=function(){doGen(true);};
+document.getElementById('rgA').oninput=function(){document.getElementById('vA').textContent=(+this.value).toFixed(2);};
+document.getElementById('rgW').oninput=function(){document.getElementById('vW').textContent=this.value+' 期';};
+document.getElementById('rgK').oninput=function(){document.getElementById('vK').textContent=this.value+' 注';};
+[['segN',function(b){trendN=+b.dataset.n;renderTrend();}],
+ ['segC',function(b){cand=+b.dataset.c;}],
+ ['segD',function(b){maxOv=+b.dataset.d;}],
+ ['segCap',function(b){capUse=+b.dataset.v;}]].forEach(function(p){
+  var box=document.getElementById(p[0]);
+  box.onclick=function(e){ var b=e.target.closest('button'); if(!b)return;
+    [].forEach.call(box.children,function(x){x.classList.remove('on');});
+    b.classList.add('on'); p[1](b); };
+});
+document.getElementById('cbLine').onchange=renderTrend;
+
+/* ================= 批量自动生成 ================= */
+function pad(n){ return n<10?'0'+n:''+n; }
+function lineOf(p){ return p.red.map(pad).join(' ')+' + '+pad(p.blue); }
+var batchText='';
+function runBatch(){
+  var n=Math.max(1,Math.min(200,+document.getElementById('bgN').value||10));
+  var t0=performance.now();
+  var opt={alpha:+document.getElementById('rgA').value, win:+document.getElementById('rgW').value,
+    cand:cand, k:+document.getElementById('rgK').value, maxOv:maxOv, cap:capUse, cfg:cfg(),
+    dan:parseNums(document.getElementById('inDan').value,33),
+    kill:parseNums(document.getElementById('inKill').value,33)};
+  var h='', txt='双色球自动生成 '+n+' 期（α='+opt.alpha.toFixed(2)+'）  生成时间 '+new Date().toLocaleString('zh-CN')+'\n';
+  PICKS.batch=[];
+  for(var i=0;i<n;i++){
+    var res=generate(opt);
+    PICKS.batch.push(res.picks);
+    h+='<div class="pick"><div style="min-width:64px;font-size:12px;color:var(--tx2)">第'+(i+1)+'期</div><div style="flex:1">';
+    res.picks.forEach(function(p){ h+='<div class="nums" style="margin:3px 0">'+lineOf(p)+'</div>'; });
+    h+='</div></div>';
+    txt+='\n第'+(i+1)+'期\n'+res.picks.map(function(p){return '  '+lineOf(p);}).join('\n')+'\n';
+  }
+  batchText=txt;
+  document.getElementById('batchOut').innerHTML=h;
+  document.getElementById('bgInfo').textContent=n+' 期 × '+opt.k+' 注，耗时 '+Math.round(performance.now()-t0)+' ms';
+}
+document.getElementById('btnBatch').onclick=runBatch;
+document.getElementById('btnCopy').onclick=function(){
+  if(!batchText){ runBatch(); }
+  var ta=document.createElement('textarea');
+  ta.value=batchText; document.body.appendChild(ta); ta.select();
+  var ok=false; try{ ok=document.execCommand('copy'); }catch(e){}
+  document.body.removeChild(ta);
+  if(navigator.clipboard&&navigator.clipboard.writeText) navigator.clipboard.writeText(batchText).catch(function(){});
+  document.getElementById('bgInfo').textContent=ok?'已复制到剪贴板':'已生成 '+batchText.split('期').length+' 期文本';
+};
+
+/* ================= 模拟摇奖（物理摇奖机） ================= */
+var SIM={base:'http://127.0.0.1:8731', ok:false, timer:null, seq:0, rows:[], mode:''};
+/* 本地物理：sim_real.js 已在浏览器加载，直接同步摇奖，不需要任何服务 */
+var LOCAL=(typeof SSQ!=='undefined' && SSQ && typeof SSQ.shakeOnce==='function');
+function localShake(){
+  var t0=Date.now();                    /* 用真实时钟：performance.now 在部分无头环境被虚拟化 */
+  var d=SSQ.shakeOnce();
+  if(!d) return null;
+  return {red:d.red, blue:d.blue, tries:d.tries,
+          sec:Math.max(0.01, +(((Date.now()-t0)/1000).toFixed(3)))};
+}
+var AWARD={1:5000000,2:150000,3:3000,4:200,5:10,6:5,0:0};
+var LVN={1:'一等奖',2:'二等奖',3:'三等奖',4:'四等奖',5:'五等奖',6:'六等奖',0:'未中奖'};
+function prizeOf(pick,d){
+  var r=0; pick.red.forEach(function(x){ if(d.red.indexOf(x)>=0) r++; });
+  var b=pick.blue===d.blue?1:0;
+  if(r===6&&b) return 1; if(r===6) return 2; if(r===5&&b) return 3;
+  if(r===5||(r===4&&b)) return 4; if(r===4||(r===3&&b)) return 5;
+  if(b) return 6; return 0;
+}
+function jget(p,opt){ return fetch(SIM.base+p,opt).then(function(r){ return r.json(); }); }
+function balls(red,blue,hr,hb){
+  var s=red.map(function(n){
+    var on=hr&&hr.indexOf(n)>=0;
+    return '<span class="ball r"'+(on?' style="box-shadow:0 0 0 2px #3b6d11"':'')+'>'+pad(n)+'</span>';
+  }).join('');
+  s+='<span class="ball b" style="margin-left:8px'+(hb?';box-shadow:0 0 0 2px #3b6d11':'')+'">'+pad(blue)+'</span>';
+  return s;
+}
+function checkSim(){
+  if(LOCAL){
+    SIM.ok=true; SIM.mode='local';
+    document.getElementById('simState').innerHTML=
+      '<b style="color:#3b6d11">● 物理摇奖机已就绪（浏览器本地计算，无需启动服务）</b>　'+
+      '完整刚体碰撞仿真：球壳 + 双转子搅拌 + 底部小孔出球 + 滑道，约 0.15 s/期。'+
+      '<span style="color:var(--tx3)">出号完全由碰撞与重力决定，不含任何号码预设；'+
+      '与 <code>sim_real.js</code> 是同一份代码。</span>';
+    return;
+  }
+  jget('/api/status').then(function(s){
+    SIM.ok=true; SIM.mode='server';
+    document.getElementById('simState').innerHTML=
+      '<b style="color:#3b6d11">● 物理摇奖机已连接</b>　待用队列 '+s.queue+' 期　累计已摇 '+s.drawn+
+      ' 期　单期 '+s.secEach+' s　<span style="color:var(--tx3)">后台持续预摇，点击即时出号</span>';
+  }).catch(function(){
+    SIM.ok=false;
+    document.getElementById('simState').innerHTML=
+      '<b style="color:var(--red-d)">● 无法启动物理摇奖</b>　未加载到 <code>sim_real.js</code>（请把 <code>picker/</code> 与 '+
+      '<code>sim_real.js</code> 放在一起），也未检测到本地服务。<br>'+
+      '可启动服务：<code>node picker/sim_server.js</code> 后打开 <code>http://127.0.0.1:8731/index.html</code>。<br>'+
+      '其余功能（走势图 / 频次图 / 选号 / 批量生成）均可离线正常使用。';
+  });
+}
+function takeMany(n,done,prog){
+  if(LOCAL){
+    var got=[];
+    (function step(){
+      var t0=(window.performance||Date).now();
+      while(got.length<n && (window.performance||Date).now()-t0<350){
+        var d=localShake();
+        if(d) got.push(d);
+      }
+      if(prog) prog(got.length,n);
+      if(got.length<n) setTimeout(step,0); else done(got);
+    })();
+    return;
+  }
+  var got=[];
+  (function step(){
+    var need=Math.min(50,n-got.length);
+    jget('/api/draw?n='+need).then(function(r){
+      if(!r.ok) throw new Error(r.err||'draw failed');
+      got=got.concat(r.draws);
+      if(prog) prog(got.length,n);
+      if(got.length<n) step(); else done(got);
+    }).catch(function(e){ done(got,e); });
+  })();
+}
+function renderRow(d,picks,tag){
+  var s='<div class="pick"><div style="min-width:78px;font-size:12px;color:var(--tx2)">'+(tag||('第'+d.seq+'摇'))+'</div>';
+  s+='<div class="nums">'+balls(d.red,d.blue)+'</div>';
+  s+='<div class="pmeta" style="font-size:12px">';
+  if(!picks||!picks.length) s+='<span class="tag">未生成号码</span>';
+  picks.forEach(function(p,i){
+    var lv=prizeOf(p,d);
+    s+='<span class="tag'+(lv?' ok':'')+'">注'+(i+1)+' '+(lv?LVN[lv]+' +¥'+AWARD[lv].toLocaleString():'未中')+'</span>';
+  });
+  s+='</div></div>';
+  return s;
+}
+function finishDraw(d){
+  d.seq=++SIM.seq;
+  SIM.rows.unshift(d); if(SIM.rows.length>30) SIM.rows.pop();
+  var picks=PICKS.rec.length?PICKS.rec:PICKS.rand;
+  var h=SIM.rows.map(function(x,i){
+    return renderRow(x, i===0?picks:null);
+  }).join('');
+  document.getElementById('simOut').innerHTML=h;
+  document.getElementById('simInfo').textContent='第 '+SIM.seq+' 摇完成，'+
+    (SIM.mode==='local' ? '浏览器本地刚体仿真（球壳搅拌→小孔出球，约 0.15 s/期）'
+                        : '物理仿真 '+d.sec+' s')+
+    (d.tries&&d.tries>1?'（重试 '+(d.tries-1)+' 次）':'');
+}
+function drawOne(autoTag){
+  if(!SIM.ok){ checkSim(); return; }
+  var info=document.getElementById('simInfo');
+  if(LOCAL){
+    info.textContent='出球中…（浏览器本地刚体仿真，约 0.3 秒）';
+    setTimeout(function(){
+      var d=localShake();
+      if(!d){ info.textContent='摇奖失败：本次搅拌未能出满 7 球（几何卡球），请重试'; return; }
+      finishDraw(d);
+    },30);
+    return;
+  }
+  info.textContent='出球中…';
+  jget('/api/draw?n=1').then(function(r){
+    if(!r.ok) throw new Error(r.err||'fail');
+    finishDraw(r.draws[0]);
+  }).catch(function(e){
+    info.textContent='摇奖失败：'+e.message;
+  });
+}
+document.getElementById('btnDraw1').onclick=function(){ drawOne(); };
+document.getElementById('btnAuto').onclick=function(){
+  if(SIM.timer) return;
+  var gap=Math.max(1,+document.getElementById('simGap').value||3)*1000;
+  document.getElementById('btnStop').disabled=false;
+  document.getElementById('btnAuto').disabled=true;
+  drawOne();
+  SIM.timer=setInterval(function(){ drawOne(); },gap);
+  document.getElementById('simInfo').textContent='自动摇奖中，每 '+(gap/1000)+' 秒一期';
+};
+document.getElementById('btnStop').onclick=function(){
+  clearInterval(SIM.timer); SIM.timer=null;
+  document.getElementById('btnAuto').disabled=false;
+  document.getElementById('btnStop').disabled=true;
+  document.getElementById('simInfo').textContent='已停止，共摇 '+SIM.seq+' 期';
+};
+/* 真·机选：完全均匀，无任何过滤——这才是正确的零假设对照组 */
+function quickPicks(k){
+  var out=[],pool;
+  for(var i=0;i<k;i++){
+    pool=[]; for(var x=1;x<=33;x++) pool.push(x);
+    var r=[];
+    for(var j=0;j<6;j++) r.push(pool.splice(Math.floor(Math.random()*pool.length),1)[0]);
+    out.push({red:r.sort(function(a,b){return a-b;}),blue:1+Math.floor(Math.random()*16)});
+  }
+  return out;
+}
+function genOpt(a){ return {alpha:a, win:+document.getElementById('rgW').value,
+  cand:cand, k:+document.getElementById('rgK').value, maxOv:maxOv, cap:capUse,
+  cfg:cfg(), dan:null, kill:null}; }
+document.getElementById('btnVerify').onclick=function(){
+  if(!SIM.ok){ checkSim(); return; }
+  var n=Math.max(10,Math.min(1000,+document.getElementById('simN').value||100));
+  var K=+document.getElementById('rgK').value;
+  var per=document.getElementById('cbPer').checked && PICKS.batch && PICKS.batch.length>0;
+  var rec=PICKS.rec;
+  if(!rec.length) rec=generate(genOpt(+document.getElementById('rgA').value)).picks;
+  var recB=PICKS.batch||[], rndB=[];
+  if(per) for(var q=0;q<recB.length;q++) rndB.push(quickPicks(recB[q].length||K));
+  var rnd=per?[]:quickPicks(rec.length||K);
+  var box=document.getElementById('simCmp');
+  box.innerHTML='<div class="note">正在用物理摇奖机摇 '+n+' 期并逐期判奖'+
+    (per?'（逐期对打：第 i 期开奖 vs 批量生成的第 i 期号码）':'')+'，预计 '+Math.round(n*1.05)+' 秒…<span id="vProg"></span></div>';
+  var t0=Date.now();
+  takeMany(n,function(draws,err){
+    function acc(get){
+      var t={0:0,1:0,2:0,3:0,4:0,5:0,6:0},win=0,bets=0,hit=0;
+      draws.forEach(function(d,i){
+        var ps=get(i); if(!ps) return;
+        ps.forEach(function(p){ var lv=prizeOf(p,d); t[lv]++; win+=AWARD[lv]; if(lv) hit++; });
+        bets+=ps.length;
+      });
+      return {t:t,win:win,cost:bets*2,roi:bets?win/(bets*2)*100:0,hit:hit,bets:bets};
+    }
+    var A=per?acc(function(i){return recB[i%recB.length];}) :acc(function(){return rec;});
+    var B=per?acc(function(i){return rndB[i%rndB.length];}) :acc(function(){return rnd;});
+    function row(name,x){
+      return '<tr><td>'+name+'</td><td>'+x.bets+'</td>'+
+        [6,5,4,3,2,1].map(function(l){ return '<td>'+(x.t[l]||'-')+'</td>'; }).join('')+
+        '<td>'+x.hit+'</td><td>¥'+x.win.toLocaleString()+'</td><td><b>'+x.roi.toFixed(1)+'%</b></td></tr>';
+    }
+    var exp6=A.bets/16, expHit=B.bets/16;
+    box.innerHTML='<h3>物理摇奖对照验证（'+draws.length+' 期物理开奖'+(err?'，提前中断：'+err.message:'')+
+      '，耗时 '+Math.round((Date.now()-t0)/1000)+' s'+(per?'，逐期对打模式':'')+'）</h3>'+
+      '<table><tr><th>组别</th><th>投注注数</th><th>六等</th><th>五等</th><th>四等</th><th>三等</th><th>二等</th><th>一等</th>'+
+      '<th>中奖次数</th><th>返还</th><th>返奖率</th></tr>'+
+      row('推荐号码 α='+(PICKS.alpha||0).toFixed(2),A)+row('纯机选（完全均匀随机）',B)+
+      '<tr><td style="color:var(--tx3)">理论期望</td><td>'+A.bets+'</td><td>~'+exp6.toFixed(0)+
+      '</td><td colspan="4" style="color:var(--tx3)">更高奖级在千期内几乎不可能出现</td><td>~'+expHit.toFixed(0)+
+      '</td><td colspan="2" style="color:var(--tx3)">长期返奖率 → 约 50%</td></tr></table>'+
+      '<p class="note">两组使用<b>完全相同的 '+draws.length+' 期物理开奖号码</b>，唯一差别是选号方式。'+
+      '判据：六等奖（蓝球命中）理论概率 1/16，'+A.bets+' 注的期望约 '+exp6.toFixed(0)+' 次，'+
+      '其随机波动约 ±'+Math.sqrt(A.bets*(1/16)*(15/16)).toFixed(1)+' 次。'+
+      '两组差距若落在这个范围内，就说明选号规则<b>没有带来任何额外信息</b>——这正是预期结果。'+
+      '样本仅 '+draws.length+' 期，<b>请勿把任何一组的高返奖率当作方法有效的证据</b>。</p>';
+  },function(got,tot){
+    var el=document.getElementById('vProg');
+    if(el) el.textContent='　已摇 '+got+'/'+tot;
+  });
+};
+checkSim();
+
+/* ---------- 3D 摇奖机结果：读取 3D 页写入的共享列表 ---------- */
+(function(){
+  var KEY='ssq3d_sim_results_v1';
+  function esc(s){ return String(s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function pad(n){ return (n<10?'0':'')+n; }
+  function fmt(t){ try{ return new Date(t).toLocaleString('zh-CN',
+    {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(e){ return '—'; } }
+  function balls(r,b){
+    var h='',i;
+    for(i=0;i<r.length;i++) h+='<span class="ball r lg">'+pad(r[i])+'</span>';
+    return h+'<span class="ball b lg" style="margin-left:6px">'+pad(b)+'</span>';
+  }
+  /* 内存兜底：预览沙箱下 localStorage 可能整体被禁，数据留在内存里照样显示 */
+  var memStore = [];
+  function read(){
+    try{
+      var a = JSON.parse(localStorage.getItem(KEY)||'[]');
+      if(a && a.length) return a;
+    }catch(e){}
+    return memStore;
+  }
+  /* 权威数据源是结果文件 sim3d_results.json（node picker/sim_server.js 提供 /api/sim3d）；
+     服务没启动时静默回退到 localStorage / 内存。 */
+  var API = (location.port === '8731' ? '' : 'http://127.0.0.1:8731') + '/api/sim3d';
+  function sig(x){
+    return (x.t||0)+'|'+(x.b||0)+'|'+(x.r||[]).slice().sort(function(a,b){return a-b;}).join(',');
+  }
+  function absorb(arr){                         /* 把远程/hash 数据合并进本地，返回新增条数 */
+    var cur=read(), seen={}, i;
+    for(i=0;i<cur.length;i++) seen[sig(cur[i])]=1;
+    var add=(arr||[]).filter(function(x){ return x&&x.r&&x.r.length===6&&!seen[sig(x)]; });
+    if(add.length){
+      var all=cur.concat(add).sort(function(a,b){ return (a.t||0)-(b.t||0); });
+      memStore=all;
+      try{ localStorage.setItem(KEY, JSON.stringify(all)); }catch(e){}
+    }
+    return add.length;
+  }
+  function remoteLoad(then){
+    try{
+      fetch(API,{cache:'no-store'}).then(function(r){ return r.ok?r.json():null; })
+        .then(function(j){
+          absorb((j&&j.results)||[]);
+          if(then) then();
+        }).catch(function(){ if(then) then(); });
+    }catch(e){ if(then) then(); }
+  }
+  /* 3D 页跳转链接携带的 hash 数据（没跑本地服务时的兜底通道） */
+  (function(){
+    var m=location.hash.match(/[#&]s3d=([^&]+)/);
+    if(!m) return;
+    try{ absorb(JSON.parse(decodeURIComponent(m[1]))); }catch(e){}
+    try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+  })();
+  function render(){
+    var arr=read(), box=document.getElementById('sim3dList');
+    document.getElementById('sim3dBadge').textContent=arr.length;
+    document.getElementById('sim3dCount').textContent=arr.length? '共 '+arr.length+' 期':'';
+    document.getElementById('sim3dInfo').textContent=arr.length? '最近 '+esc(fmt(arr[arr.length-1].t)):'';
+    if(!arr.length){
+      box.innerHTML='<div class="s3d-empty">还没有 3D 摇奖结果。推荐这样用：<br>'+
+        '① 在项目目录执行 <code>node picker/sim_server.js</code> 启动本地服务；<br>'+
+        '② 浏览器打开 <code>http://127.0.0.1:8731/machine</code> 摇奖——每期结果会自动写入文件 '+
+        '<code>sim3d_results.json</code>；<br>'+
+        '③ 打开 <code>http://127.0.0.1:8731/picker/index.html</code>，这里就能看到全部结果'+
+        '（也可点上方「刷新结果」随时拉取）。<br>'+
+        '不跑服务时：从 3D 页点「选号工具 →」跳转，结果会随链接自动带入。</div>';
+      return;
+    }
+    var h='';
+    for(var i=arr.length-1;i>=0;i--){
+      var it=arr[i], r=(it.r||[]).slice().sort(function(a,b){return a-b;}), e=it.e;
+      var s=0,o=0,j;
+      for(j=0;j<r.length;j++){ s+=r[j]; if(r[j]%2) o++; }
+      h+='<div class="s3d-item" data-i="'+i+'">'+
+           '<div class="s3d-hd"><b>#'+(i+1)+'</b><span>'+esc(fmt(it.t))+'</span>'+
+           (e&&e.items&&e.items.length
+             ? '<span class="s3d-badge '+esc(e.level||'mid')+'">'+esc(e.verdict||'')+' '+Number(e.pass||0)+'/8</span>'
+             : '<span class="s3d-badge mid">形态评估未同步</span>')+
+           '<span>和值 '+s+' · 跨度 '+(r.length?r[r.length-1]-r[0]:0)+' · 奇偶 '+o+':'+(r.length-o)+'</span>'+
+           '<span style="color:var(--tx3)">点击展开明细</span></div>'+
+           '<div class="nums" style="margin-top:7px">'+balls(r,it.b)+'</div>';
+      if(e&&e.items&&e.items.length){
+        h+='<table class="s3d-tb">';
+        for(j=0;j<e.items.length;j++){
+          var x=e.items[j];
+          h+='<tr><td>'+esc(x.k)+'</td><td class="'+(x.ok?'ok':'no')+'">'+esc(x.v)+
+             '</td><td>'+esc(x.note||'')+'</td></tr>';
+        }
+        h+='</table>';
+      }else{
+        h+='<table class="s3d-tb"><tr><td colspan="3">打开一次 3D 摇奖机页面即可同步 8 项形态评估。</td></tr></table>';
+      }
+      h+='</div>';
+    }
+    box.innerHTML=h;
+  }
+  document.getElementById('btnSim3dRefresh').onclick=function(){
+    this.textContent='拉取中…';
+    var btn=this;
+    remoteLoad(function(){ btn.textContent='刷新结果'; render(); });
+  };
+  document.getElementById('sim3dList').addEventListener('click',function(e){
+    var it=e.target.closest('.s3d-item'); if(it) it.classList.toggle('open');
+  });
+  window.addEventListener('storage',function(e){ if(!e.key||e.key===KEY) render(); });
+  document.addEventListener('visibilitychange',function(){ if(!document.hidden) remoteLoad(render); });
+  render();
+  remoteLoad(render);        /* 启动时从结果文件拉一次（服务在线才有效） */
+})();
+
+/* 打开 3D 摇奖机：页面加载即后台探测目标地址并缓存，点击时直接跳（免等待，修"要点两下"） */
+var MK3D='id='+'"startBtn"';           /* 拼接写法：避免本页源码里的字符串自匹配 */
+function tryFetch3D(u){
+  return new Promise(function(res){
+    var ctl=('AbortController' in window)?new AbortController():null;
+    var to=setTimeout(function(){ if(ctl)ctl.abort(); res(null); },3000);
+    fetch(u,{cache:'no-store',signal:ctl?ctl.signal:undefined})
+      .then(function(r){ clearTimeout(to); return r.ok?r.text():null; })
+      .then(function(t){ res(t&&t.indexOf(MK3D)>=0&&t.indexOf('three')>=0?u:null); })
+      .catch(function(){ clearTimeout(to); res(null); });
+  });
+}
+var probe3DP=null;
+function probe3D(){
+  if(!probe3DP) probe3DP=tryFetch3D('/machine').then(function(u){ return u||tryFetch3D('../index.html'); });
+  return probe3DP;
+}
+probe3D();                             /* 预热 */
+document.getElementById('lnkMachine').onclick=function(){
+  var btn=this, old=btn.textContent;
+  function tip(msg){
+    var t=document.getElementById('lnkTip');
+    if(!t){
+      t=document.createElement('div'); t.id='lnkTip';
+      t.style.cssText='margin:8px 0 14px;padding:10px 12px;border-radius:8px;font-size:13px;line-height:1.75;'+
+        'border:1px solid var(--red-d,#c33);color:var(--red-d,#c33)';
+      btn.parentNode.appendChild(t);
+    }
+    t.innerHTML=msg; btn.textContent=old;
+  }
+  if(location.protocol==='file:'){ location.href='../index.html'; return; }
+  btn.textContent='检测中…';
+  probe3D().then(function(u){
+    if(u) location.href=u;
+    else tip('当前页面由一个静态服务托管，找不到 3D 摇奖机页面。请二选一：<br>'+
+      '① 在项目目录执行 <code>node picker/sim_server.js</code>，浏览器打开 <code>http://127.0.0.1:8731/index.html</code>；<br>'+
+      '② 直接双击文件 <code>E:/shuangseqiu-3d-sim/index.html</code>。');
+  });
+};
+document.getElementById('lnkSim3dGo').onclick=document.getElementById('lnkMachine').onclick;
+
+/* ---------- 启动 ---------- */
+buildDist();
+renderOverview();
+renderTrend();
+renderCharts();
+doGen(false);
+})();
+</script>
+</body>
+</html>

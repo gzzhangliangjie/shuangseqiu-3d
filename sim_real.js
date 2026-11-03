@@ -4,6 +4,22 @@
         → 滑道（右行→下行→左行到取球位）→ 出过的球留在滑道排成一行 */
 const R_BALL = 0.089, G = 22, REST_BALL = 0.55, REST_WALL = 0.62, DT = 1 / 120;
 
+/* ---------- L4 偏置反推：给每个号码一个固定的半径公差 ----------
+   SSQ_BIAS=0（默认）时 b.r === R_BALL，物理与原始版本完全等价，不会改变任何行为。
+   SSQ_BIAS=0.05 表示各球半径在 ±5% 内按号码固定取值（模拟真机球体直径公差）。
+   SSQ_FIXED=1   跳过编号洗牌，号码固定映射到预览架位置（模拟装球习惯造成的固定偏置）。
+   号码 → 公差用确定性 hash，保证跨进程一致（批量跑靠多次 spawn，必须同号同公差）。 */
+const HAS_PROC = (typeof process !== 'undefined' && !!process.env);
+let SSQ_BIAS = HAS_PROC ? +(process.env.SSQ_BIAS || 0) : 0;
+let SSQ_FIXED = HAS_PROC ? process.env.SSQ_FIXED === '1' : false;
+function ballBias(num){
+  if(!SSQ_BIAS) return 0;
+  let s = 0;
+  for(let k = 1; k <= 3; k++) s += Math.sin(num * (12.9898 * k) + 7.7 * k) * 43758.5453;
+  s = s / 3; s = s - Math.floor(s);
+  return (s * 2 - 1) * SSQ_BIAS;
+}
+
 const UPPER_PTS = [   /* 第一层：出球孔正下方 → 右端落球洞口（坡度 ~11°） */
   [-0.06, 2.686, 0.869], [0.44, 2.56, 0.72],
 ];
@@ -62,7 +78,7 @@ function makeMachine(cfg){
   const rackDefs=buildRack(cfg);
   /* 编号随机洗牌（Fisher–Yates），与页面一致：物理选位置，编号每局随机 */
   const nums=Array.from({length:cfg.count},(_,i)=>i+1);
-  for(let i=nums.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [nums[i],nums[j]]=[nums[j],nums[i]]; }
+  if(!SSQ_FIXED) for(let i=nums.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [nums[i],nums[j]]=[nums[j],nums[i]]; }
   const balls=[]; let idx=0;
   for(const td of rackDefs){
     for(let k=0;k<td.n;k++){
@@ -70,7 +86,7 @@ function makeMachine(cfg){
       const num=nums[idx++];
       const sT=R_BALL+0.12+k*(R_BALL*2+0.01);
       const p=[td.base[0]+td.dir[0]*sT, td.base[1]+td.dir[1]*sT, td.base[2]+td.dir[2]*sT];
-      balls.push({num, p, home:p.slice(), tube:td, sT, vsT:0,
+      balls.push({num, p, home:p.slice(), tube:td, sT, vsT:0, r:R_BALL*(1+ballBias(num)),
                   v:[0,0,0], state:'in', placed:false, railT:0, s:0, vs:0});
     }
   }
@@ -127,9 +143,9 @@ function stepInBall(b,m,dt){
   for(let i=0;i<3;i++) p[i]+=v[i]*dt;
 
   // 转子顶面支撑：出球孔正上方留缺口
-  const floorC=m.discY+0.05+R_BALL;
+  const floorC=m.discY+0.05+b.r;
   const prr=Math.hypot(p[0]-m.cx,p[2]-m.cz);
-  const maxR=Math.min(Math.sqrt(Math.max(0,(m.R-R_BALL)**2-(m.cy-floorC)**2)), m.rOuter);
+  const maxR=Math.min(Math.sqrt(Math.max(0,(m.R-b.r)**2-(m.cy-floorC)**2)), m.rOuter);
   if(p[1]<floorC){ p[1]=floorC;
     if(prr>maxR){ const k=maxR/prr; p[0]=m.cx+(p[0]-m.cx)*k; p[2]=m.cz+(p[2]-m.cz)*k; }
     if(v[1]<-2.2)v[1]*=-0.25; else v[1]=0; }
@@ -147,7 +163,7 @@ function stepInBall(b,m,dt){
   const d=Math.hypot(rx,ry,rz);
   if(m.holeOpen&&!m.captured&&d>1e-6){
     const nx=rx/d,ny=ry/d,nz=rz/d;
-    if((nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit&&d>m.R-R_BALL*1.6){
+    if((nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit&&d>m.R-b.r*1.6){
       b.state='rail'; b.placed=false; b.settle=0; b.railT=0;
       b.p=[m.cx+m.exitDir[0]*m.R, m.cy+m.exitDir[1]*m.R, m.cz+m.exitDir[2]*m.R];
       b.v=[m.exitDir[0]*0.8, m.exitDir[1]*0.8, m.exitDir[2]*0.8];
@@ -156,11 +172,11 @@ function stepInBall(b,m,dt){
     }
   }
   // 完整球壳约束：仅出球孔可穿
-  if(d>m.R-R_BALL){
+  if(d>m.R-b.r){
     const nx=rx/d,ny=ry/d,nz=rz/d;
     const inExit=m.holeOpen&&(nx*m.exitDir[0]+ny*m.exitDir[1]+nz*m.exitDir[2])>m.cosExit;
     if(!inExit){
-      const push=m.R-R_BALL;
+      const push=m.R-b.r;
       p[0]=m.cx+nx*push; p[1]=m.cy+ny*push; p[2]=m.cz+nz*push;
       const vn=v[0]*nx+v[1]*ny+v[2]*nz;
       if(vn>0){ const f=(1+REST_WALL)*vn;
@@ -349,7 +365,7 @@ function collideGroup(arr){
   for(let i=0;i<arr.length;i++)for(let j=i+1;j<arr.length;j++){
     const a=arr[i],b=arr[j];
     const rx=b.p[0]-a.p[0],ry=b.p[1]-a.p[1],rz=b.p[2]-a.p[2];
-    const d=Math.hypot(rx,ry,rz),min=R_BALL*2;
+    const d=Math.hypot(rx,ry,rz),min=a.r+b.r;
     if(d>1e-6&&d<min){
       const nx=rx/d,ny=ry/d,nz=rz/d,ov=(min-d)/2;
       a.p[0]-=nx*ov; a.p[1]-=ny*ov; a.p[2]-=nz*ov;
@@ -394,7 +410,7 @@ function runMachine(m, log){
             const th=m.rotPhase[pg.rot]+pg.ph+k/pg.n*Math.PI*2;
             const px=m.cx+Math.cos(th)*pg.r, pz=m.cz-Math.sin(th)*pg.r;
             const dx=b.p[0]-px, dz=b.p[2]-pz;
-            const dd=Math.hypot(dx,dz), minD=R_BALL+pg.rp;
+            const dd=Math.hypot(dx,dz), minD=b.r+pg.rp;
             if(dd<minD&&dd>1e-6){
               if(m.hitProbe) m.hitProbe[Math.min(5,Math.floor((Math.hypot(b.p[0]-m.cx,b.p[2]-m.cz)-0.08)/0.08))]++;
               const nx=dx/dd,nz=dz/dd;
@@ -422,7 +438,7 @@ function runMachine(m, log){
         const br=Math.hypot(bx,bz);
         if(br<1e-4||Math.abs(b.p[1]-topY)>0.4)continue;
         const dr=br-ringR, dy=b.p[1]-topY;
-        const dd=Math.hypot(dr,dy), minD=R_BALL+rc;
+        const dd=Math.hypot(dr,dy), minD=b.r+rc;
         if(dd<minD&&dd>1e-6){
           const nr=dr/dd, ny=dy/dd, push=minD-dd;
           const ux=bx/br, uz=bz/br;
@@ -476,16 +492,51 @@ function runMachine(m, log){
   return true;
 }
 
-console.log('=== 勿忘草真机比例仿真（完整球壳+环形预览架→双转子搅拌→底部小孔→滑道排队）===');
-console.log(`滑道（全3D管壁约束）段数=${RAIL_SEGS.length}`);
-let allOK=true;
-for(const cfg of CFG){
-  for(let round=1;round<=3;round++){
-    const m=makeMachine(cfg);
-    const lines=[];
-    const ok=runMachine(m,l=>lines.push(l));
-    if(round===1||!ok) console.log(lines.join('\n'));
-    if(!ok) allOK=false;
+/* ---------- 单期摇奖 API（浏览器 / 批量脚本 / 服务都走这一条） ----------
+   红球一轮出 6 个、蓝球一轮出 1 个，正好是一期双色球。
+   opt.retry: 单次搅拌因几何卡球未出满时的重试次数（默认 4，实测卡球率 <1%）
+   opt.bias / opt.fixed: 覆盖 L4 偏置注入参数（不传则用环境变量 / 0） */
+function shakeOnce(opt){
+  opt = opt || {};
+  if(opt.bias  !== undefined) SSQ_BIAS  = +opt.bias || 0;
+  if(opt.fixed !== undefined) SSQ_FIXED = !!opt.fixed;
+  const out = { red:null, blue:null, tries:0 };
+  for(const cfg of CFG){
+    let got = null;
+    for(let a = 0; a < (opt.retry || 4) && !got; a++){
+      const m = makeMachine(cfg);
+      const ok = runMachine(m, function(){});
+      out.tries++;
+      if(ok) got = m.balls.filter(b => b.placed).map(b => b.num).sort((x, y) => x - y);
+    }
+    if(!got || got.length !== cfg.draws) return null;   // 连续失败，交给调用方处理
+    if(cfg.key === 'red') out.red = got; else out.blue = got[0];
   }
+  return out;
 }
-console.log(allOK?'\n全部通过 ✓':'\n存在失败 ✗');
+
+/* 暴露给三种宿主：Node require / 浏览器 <script> / Web Worker importScripts */
+const SSQ = {
+  shakeOnce, CFG, R_BALL,
+  setBias(v){ SSQ_BIAS = +v || 0; },
+  setFixed(f){ SSQ_FIXED = !!f; }
+};
+if (typeof globalThis !== 'undefined') globalThis.SSQ = SSQ;
+if (typeof module !== 'undefined' && module.exports) module.exports = SSQ;
+
+/* ---------- CLI：仅在「直接 node sim_real.js」时执行 ---------- */
+if (typeof module !== 'undefined' && typeof require !== 'undefined' && require.main === module) {
+  console.log('=== 勿忘草真机比例仿真（完整球壳+环形预览架→双转子搅拌→底部小孔→滑道排队）===');
+  console.log(`滑道（全3D管壁约束）段数=${RAIL_SEGS.length}`);
+  let allOK=true;
+  for(const cfg of CFG){
+    for(let round=1;round<=3;round++){
+      const m=makeMachine(cfg);
+      const lines=[];
+      const ok=runMachine(m,l=>lines.push(l));
+      if(round===1||!ok) console.log(lines.join('\n'));
+      if(!ok) allOK=false;
+    }
+  }
+  console.log(allOK?'\n全部通过 ✓':'\n存在失败 ✗');
+}
