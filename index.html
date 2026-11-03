@@ -18,6 +18,7 @@
   canvas { display: block; }
   #hud { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); text-align: center; z-index: 10; pointer-events: none; }
   #title {
+    display: none;                                 /* 隐藏顶部标题「双色球…」 */
     font-size: 25px; font-weight: 700; letter-spacing: 4px;
     background: linear-gradient(90deg, #c62828, #d99214, #1e5bbf);
     -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -36,8 +37,8 @@
   .slot.blue.filled { background: radial-gradient(circle at 35% 30%, #6fa8ff, #0d47a1 70%); border-color: #9cc0ff; }
   .slot.pop { animation: pop .5s cubic-bezier(.2,1.6,.4,1); }
   @keyframes pop { 0% { transform: scale(.2); } 100% { transform: scale(1); } }
-  #phase { margin-top: 12px; font-size: 15px; color: #40597a; letter-spacing: 2px; min-height: 22px; }
-  #phase.active { color: #b8620c; text-shadow: 0 0 12px rgba(255,180,80,.45); }
+  #phase { display: none; position: fixed; bottom: 86px; left: 50%; transform: translateX(-50%); font-size: 15px; color: #40597a; letter-spacing: 2px; min-height: 22px; text-align: center; z-index: 10; }
+  #phase.active { display: block; color: #b8620c; text-shadow: 0 0 12px rgba(255,180,80,.45); }   /* 仅页面报错时显示 */
   #controls { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%); display: flex; gap: 16px; z-index: 10; }
   button {
     padding: 12px 34px; font-size: 17px; font-weight: 700; letter-spacing: 3px;
@@ -47,9 +48,11 @@
   #startBtn { background: linear-gradient(135deg, #e53935, #b71c1c); box-shadow: 0 4px 24px rgba(229,57,53,.45); }
   #startBtn:hover:not(:disabled) { transform: translateY(-2px); }
   #resetBtn { background: rgba(255,255,255,.6); color: #25354d; border-color: rgba(40,60,90,.2); }
+  #muteBtn { background: rgba(255,255,255,.6); color: #25354d; border-color: rgba(40,60,90,.2); }
+  #muteBtn.off { background: rgba(208,52,44,.85); color: #fff; border-color: rgba(255,255,255,.3); }
   button:disabled { opacity: .4; cursor: not-allowed; }
-  #tip { position: fixed; bottom: 10px; right: 16px; font-size: 12px; color: rgba(32,48,72,.45); z-index: 10; }
   #legend {
+    display: none;                                 /* 隐藏左上角「真机复刻…」图例说明 */
     position: fixed; top: 16px; left: 18px; font-size: 12.5px; line-height: 1.85;
     color: rgba(32,48,72,.68); z-index: 10;
   }
@@ -61,7 +64,6 @@
 <div id="hud">
   <div id="title">双色球 · 勿忘草 Myosotis 摇奖机</div>
   <div id="results"></div>
-  <div id="phase">点击「开始摇奖」</div>
 </div>
 <div id="legend">
   <div><b>真机复刻 · 法国 RYO CATTEAU「勿忘草」Myosotis</b></div>
@@ -71,11 +73,12 @@
   <div>③ 出球口档杆 → 出球轨道（开一颗、过一颗、关阀）</div>
   <div>④ 底座：PLC 按固定搅拌间隔控制出球</div>
 </div>
+<div id="phase">点击「开始摇奖」</div>
 <div id="controls">
   <button id="startBtn">开始摇奖</button>
   <button id="resetBtn">重 置</button>
+  <button id="muteBtn">音效：开</button>
 </div>
-<div id="tip">拖拽旋转视角 · 滚轮缩放</div>
 
 <script>
 /* 运行时错误直接显示在页面提示栏，避免整页黑掉无提示 */
@@ -100,6 +103,103 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+/* ================= 音效（Web Audio 程序化合成，无需任何外部音频文件） ================= */
+const AudioFX = (() => {
+  let ctx = null, master = null, muted = false;
+  let stirOsc = null, stirGain = null, stirFilter = null;   /* 搅拌持续音（机器嗡鸣）节点 */
+  let stirReady = false;
+  function ensure() {
+    if (!ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 0.7;
+      master.connect(ctx.destination);
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function now() { return ctx ? ctx.currentTime : 0; }
+
+  /* 单次音调：支持起始/终止频率（扫频）、波形、音量包络 */
+  function tone({ freq = 440, freqEnd = null, type = 'sine', dur = 0.18, vol = 0.5, attack = 0.005, when = 0 }) {
+    if (!ensure()) return;
+    const t0 = now() + when;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0 + attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(master);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.03);
+  }
+
+  function start() {                              /* 开奖开始：上扬双音 */
+    tone({ freq: 523.25, type: 'triangle', dur: 0.16, vol: 0.45 });
+    tone({ freq: 783.99, type: 'triangle', dur: 0.22, vol: 0.45, when: 0.12 });
+  }
+  function gateOpen() {                           /* 闸门抽开：低→中机械扫频 */
+    tone({ freq: 190, freqEnd: 90, type: 'sawtooth', dur: 0.34, vol: 0.16 });
+  }
+  function ballOut() {                            /* 出球滑落：短促下行「咻」 */
+    tone({ freq: 900, freqEnd: 320, type: 'sine', dur: 0.18, vol: 0.22 });
+  }
+  function place() {                              /* 球落位：清脆「叮」（双泛音） */
+    tone({ freq: 1046.5, type: 'triangle', dur: 0.14, vol: 0.30 });
+    tone({ freq: 2093.0, type: 'sine', dur: 0.10, vol: 0.13 });
+  }
+  function done() {                               /* 开奖完成：上行三音和弦 */
+    [523.25, 659.25, 783.99].forEach((f, i) =>
+      tone({ freq: f, type: 'triangle', dur: 0.5, vol: 0.4, when: i * 0.14 }));
+  }
+  function reset() {                              /* 复位：轻短下行音 */
+    tone({ freq: 440, freqEnd: 220, type: 'sine', dur: 0.16, vol: 0.18 });
+  }
+
+  /* 搅拌持续音：低频锯齿嗡鸣 + 噪声摩擦层，gain 跟随搅拌强度(0~1)。
+     这是最初那版「机器运转嗡嗡嗡」，结构简单、听感稳，不再做颗粒合成。 */
+  function startStir() {
+    if (!ensure() || stirReady) return;
+    stirGain = ctx.createGain(); stirGain.gain.value = 0.0001;
+    stirFilter = ctx.createBiquadFilter(); stirFilter.type = 'lowpass'; stirFilter.frequency.value = 320;
+    stirGain.connect(master);
+    stirOsc = ctx.createOscillator(); stirOsc.type = 'sawtooth'; stirOsc.frequency.value = 70;
+    const og = ctx.createGain(); og.gain.value = 0.5;
+    stirOsc.connect(og).connect(stirFilter);
+    /* 噪声摩擦层：让嗡鸣带一点「球在滚」的沙沙质感 */
+    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 1.5), ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.5;
+    const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
+    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 220; nf.Q.value = 0.7;
+    const ng = ctx.createGain(); ng.gain.value = 0.22;
+    noise.connect(nf).connect(ng).connect(stirFilter);
+    stirFilter.connect(stirGain);
+    stirOsc.start(); noise.start();
+    stirReady = true;
+  }
+  function setStir(level) {
+    if (!stirReady || !ctx) return;
+    const lv = Math.max(0, Math.min(1, level || 0));
+    stirGain.gain.setTargetAtTime(muted ? 0 : lv * 0.5, ctx.currentTime, 0.08);
+    if (stirOsc) stirOsc.frequency.setTargetAtTime(60 + lv * 42, ctx.currentTime, 0.1);
+  }
+  function stopStir() { setStir(0); }
+
+  function mute(on) {
+    muted = on;
+    if (master && ctx) master.gain.setTargetAtTime(on ? 0 : 0.7, ctx.currentTime, 0.02);
+  }
+  function isMuted() { return muted; }
+
+  return { ensure, start, gateOpen, ballOut, place, done, reset, startStir, setStir, stopStir, mute, isMuted };
+})();
 
 /* ================= 场景基础 ================= */
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -504,14 +604,21 @@ function makeBallMesh(num, color) {
       ctx.font = 'bold 52px Arial';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(s, 0, 4);
-      /* 6/9 区分：6 下方加横线、9 上方加横线（标准防旋转歧义记法） */
+      /* 6/9 防旋转歧义：统一在 6/9 数字「下方」加横线（倒置后横线朝上即可分辨），
+         且只标注含 6/9 的那一位，不横贯整个号码 */
       if (s.includes('6') || s.includes('9')) {
         ctx.strokeStyle = '#151515'; ctx.lineWidth = 6; ctx.lineCap = 'round';
-        const bw = 32;
-        ctx.beginPath();
-        if (s.includes('6')) { ctx.moveTo(-bw, 30); ctx.lineTo(bw, 30); }   /* 6 → 下划线 */
-        else { ctx.moveTo(-bw, -28); ctx.lineTo(bw, -28); }                  /* 9 → 上划线 */
-        ctx.stroke();
+        const W = ctx.measureText(s).width;
+        let x0 = -W / 2;
+        for (const ch of s) {
+          const cw = ctx.measureText(ch).width;
+          if (ch === '6' || ch === '9') {
+            ctx.beginPath();
+            ctx.moveTo(x0 + 1, 30); ctx.lineTo(x0 + cw - 1, 30);
+            ctx.stroke();
+          }
+          x0 += cw;
+        }
       }
       ctx.restore();
     }
@@ -942,7 +1049,7 @@ for (let i = 0; i < 7; i++) {
   d.className = 'slot ' + (i < 6 ? 'red' : 'blue');
   resultsEl.appendChild(d); slotEls.push(d);
 }
-function setPhase(t, active) { phaseEl.textContent = t; phaseEl.className = active ? 'active' : ''; }
+function setPhase(t) { phaseEl.textContent = t; }   /* 状态文字不再显示；仅 window error 处理器会加 .active 弹出报错 */
 
 /* ================= 物理 ================= */
 const _rel = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3(), _dir = new THREE.Vector3();
@@ -1031,6 +1138,7 @@ function stepInBall(b, m, dt) {
       b.p.copy(m.exitW);
       b.v.copy(m.exitDirW).multiplyScalar(0.8);
       m.capturedBall = b;
+      AudioFX.ballOut();                 /* 出球滑落声 */
       m.holeOpen = false;               /* 真机档杆动作：出一颗立即关阀 */
       /* 已出的球留在滑道里排队（摇完后实体球排成一行 = 开奖结果） */
       return;
@@ -1271,6 +1379,7 @@ function startShow() {
   state.running = true;
   state.currentIdx = 0;
   startBtn.disabled = true; resetBtn.disabled = true;
+  AudioFX.ensure(); AudioFX.start(); AudioFX.startStir();   /* 开奖提示音 + 启动搅拌持续音 */
   focusCamera('red');                 /* 镜头先推到左侧(红)机器 */
   beginMachine(machines[0]);
 }
@@ -1283,6 +1392,7 @@ function onBallPlaced(b, m) {
   const totalIdx = m.key === 'red' ? m.doneCount : 6;
   const el = slotEls[totalIdx];
   if (el) { el.textContent = b.num; el.classList.add('filled', 'pop'); }
+  AudioFX.place();                       /* 球落位清脆声 */
   m.doneCount++;
 }
 
@@ -1293,6 +1403,7 @@ function updateMachine(m, dt) {
     if (m.gatePlate) m.gatePlate.position.z = m.gateZ0 - Math.min(1, m.timer / 0.5) * 0.85;
     if (m.timer > 0.8 && !m.loadOpen) {
       m.loadOpen = true;                     /* 挡板已抽开：管内球沿管滑落进球壳 */
+      AudioFX.gateOpen();                     /* 闸门抽开机械声 */
       for (const b of m.balls) { b.state = 'in'; b.vsT = 0; b.v.set(0, 0, 0); }
     }
     /* 球全部脱离预览管并落稳（宽阈值 + 超时兜底，避免死锁） */
@@ -1351,6 +1462,8 @@ function updateMachine(m, dt) {
         state.running = false;
         startBtn.disabled = true; resetBtn.disabled = false;
         setPhase('本期开奖完成', false);
+        AudioFX.done();                              /* 开奖完成和弦 */
+        for (const mm of machines) mm.agitTarget = 0; /* 搅拌嗡鸣渐止 */
         /* 蓝机终态画面先停留 2 秒（看清楚最后一个蓝球），再回到全景 */
         setTimeout(() => { focusCamera('overview'); }, 2000);
       }
@@ -1513,11 +1626,19 @@ function resetAll() {
   state.running = false;
   startBtn.disabled = false; resetBtn.disabled = true;
   setPhase('点击「开始摇奖」', false);
+  AudioFX.stopStir(); AudioFX.reset();  /* 停搅拌嗡鸣 + 复位音 */
   focusCamera('overview');            /* 重置时镜头也回到全景 */
 }
 resetBtn.disabled = true;
 startBtn.addEventListener('click', startShow);
 resetBtn.addEventListener('click', resetAll);
+const muteBtn = document.getElementById('muteBtn');
+muteBtn.addEventListener('click', () => {
+  const m = !AudioFX.isMuted();
+  AudioFX.mute(m);
+  muteBtn.textContent = m ? '音效：关' : '音效：开';
+  muteBtn.classList.toggle('off', m);
+});
 
 /* ================= 主循环 ================= */
 let last = performance.now();
@@ -1528,6 +1649,10 @@ function animate(now) {
     for (const m of machines) {
       if (m.phase !== 'idle') updateMachine(m, dt);
     }
+    let mg = 0; for (const m of machines) mg = Math.max(mg, m.agit);
+    AudioFX.setStir(mg);            /* 搅拌持续音音量跟随搅拌强度 */
+  } else {
+    AudioFX.setStir(0);
   }
   if (camTween.active) updateCamTween(dt); else controls.update();
   composer.render();
