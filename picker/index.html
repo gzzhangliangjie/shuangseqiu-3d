@@ -325,6 +325,13 @@ if(!D.length){ document.getElementById('picks').innerHTML='<p class="warn">未�
 D = D.slice().sort(function(a,b){return a[0]-b[0];});
 var N = D.length, LAST = D[N-1];
 var HAS_CHART = (typeof Chart !== 'undefined');
+if(!HAS_CHART){
+  /* 图表库 CDN 不可达时不留白：明确告知，选号/统计的文本数据仍可正常使用 */
+  var boxes=document.querySelectorAll('.chartbox');
+  for(var bi=0;bi<boxes.length;bi++){
+    boxes[bi].innerHTML='<p class="warn" style="padding:14px;line-height:1.7">图表库未加载（CDN 不可达）。<br>分布数据、形态评估等文字结果不受影响。</p>';
+  }
+}
 
 /* ---------- 统计 ---------- */
 var freqR = new Array(34).fill(0), freqB = new Array(17).fill(0);

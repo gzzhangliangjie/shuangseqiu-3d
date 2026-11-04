@@ -3,7 +3,8 @@
 用 Three.js 复刻中国福利彩票双色球真实摇奖机（法国 RYO CATTEAU **Myosotis**），
 **全程自己写的物理引擎**，没有预设号码或动画作弊：哪颗球被摇出，完全由物理决定。
 
-单文件网页，无需构建，浏览器直接打开 `index.html` 即可。
+单文件网页，无需构建：双击 `index.html` 即可（此方式走 CDN）；推荐用本地 http 服务打开，
+可走内置的 `_vendor/` 本地 Three.js，秒开且离线可用（见文末「Three.js 加载源」）。
 
 ## 结构对齐真机
 
@@ -55,8 +56,34 @@ node sim/sim_real.js
 
 - 「开始摇奖」：完整开奖流程
 - 「重置」：球回到预览架
-- 拖拽旋转视角 / 滚轮缩放
+- 「选号工具」：打开历史分布分析页（需先启动 `node picker/sim_server.js` 获得完整功能）
+- 左键拖拽旋转视角（滚轮缩放、右键平移已移除，避免移动端误操作）
 
 ## 技术栈
 
-Three.js 0.160（CDN importmap）+ 自写物理引擎 + RoomEnvironment 环境反射 + UnrealBloom 轻辉光。
+Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PMREM 自制影棚环境反射。
+
+## 移动端 / 小游戏适配现状
+
+渲染基线按手机真机设定，桌面端观感保持一致：
+
+- 画质：关 MSAA、DPR 封顶 2、Basic 阴影 512²、玻璃壳半透明近似（不用 `transmission`）、
+  球纹理 256×128、球用 `MeshStandardMaterial` + 18 段几何；不启用 Bloom 后处理。
+- 分辨率：`Platform` 适配层统一取视口（Web 用 `window`/`visualViewport`，小游戏预留 `wx.*` 分支），
+  `applySize()` 平台无关；`resScale` 按实时帧率在 1 → 0.6 之间动态降档。
+- 3D 构图：`fitFov(aspect)` 按宽高比动态放宽垂直视角，保证两台机器在竖屏下完整入画；
+  宽屏恒为 30°（原版构图不变）。
+- HUD：`viewport-fit=cover` + `env(safe-area-inset-*)` 避让刘海/Home 条，
+  窄屏（≤600px）/ 矮屏（≤480px）有响应式收缩。
+
+## Three.js 加载源
+
+`_vendor/` 内置完整 r160 副本（`three.module.js` + `controls/` + `environments/`）。importmap 按协议分流：
+
+- 通过 **http(s)** 打开（推荐）：走 `_vendor/` 本地副本，秒开、离线可用，也是迁小游戏
+  （不支持外部 CDN）的既定路径。
+- **双击 `index.html`（file://）/ 预览沙箱**：ES module 无法 fetch 本地 `file://`（CORS），
+  自动退回 CDN，**原有直接双击打开的能力不变**。
+
+本地起服务：在项目目录执行 `python3 -m http.server 8000`，浏览器打开 `http://127.0.0.1:8000/index.html`；
+若要用选号工具的完整功能，改用 `node picker/sim_server.js`（端口 8731）。
