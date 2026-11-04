@@ -180,11 +180,55 @@
   GameGlobal.devicePixelRatio = DPR;
   GameGlobal.navigator = { userAgent: 'Mozilla/5.0 (WeChat MiniGame)', platform: 'minigame' };
   GameGlobal.location = { protocol: 'https:', href: '', search: '', port: '', hostname: '' };
+  /* 真持久化：SimLog 的开奖记录、选号页保存的注子都落 wx storage，
+     与 Web 版 localStorage 语义一致（Web 改不动、小游戏不丢数据）。 */
   GameGlobal.localStorage = {
-    getItem() { return null; }, setItem() {}, removeItem() {}, clear() {}
+    getItem(k) {
+      try { const v = wx.getStorageSync(k); return (v === '' || v == null) ? null : v; }
+      catch (e) { return null; }
+    },
+    setItem(k, v) { try { wx.setStorageSync(k, String(v)); } catch (e) {} },
+    removeItem(k) { try { wx.removeStorageSync(k); } catch (e) {} },
+    clear() { try { wx.clearStorageSync(); } catch (e) {} }
   };
   GameGlobal.addEventListener = function () {};
   GameGlobal.removeEventListener = function () {};
+
+  /* fetch -> wx.request：可选桥接 PC 上的 picker/sim_server.js（局域网地址可在
+     game.js 里改 GameGlobal.__SIM_BASE）。服务没开 / 域名未配白名单时静默失败，
+     本地数据与全部功能不受影响。 */
+  GameGlobal.__SIM_BASE = 'http://127.0.0.1:8731';
+  GameGlobal.__SIM_REMOTE = false;         // 默认纯本地；要连 PC 服务时在 game.js 置 true
+  GameGlobal.fetch = function (url, opt) {
+    opt = opt || {};
+    /* 关闭时返回「无数据」而不是 reject：避免 SimLog 的 remoteLoad 产生
+       unhandled rejection，也避免每次开奖都向不可达地址发请求。 */
+    if (!GameGlobal.__SIM_REMOTE) {
+      return Promise.resolve({ ok: false, status: 0,
+        json() { return Promise.resolve(null); }, text() { return Promise.resolve(''); } });
+    }
+    return new Promise(function (resolve, reject) {
+      if (typeof wx.request !== 'function') { reject(new Error('wx.request unavailable')); return; }
+      wx.request({
+        url: String(url),
+        method: opt.method || 'GET',
+        data: opt.body ? String(opt.body) : undefined,
+        header: opt.headers || {},
+        timeout: 3000,
+        success(res) {
+          resolve({
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            status: res.statusCode,
+            json() { return Promise.resolve(res.data); },
+            text() { return Promise.resolve(typeof res.data === 'string' ? res.data : JSON.stringify(res.data)); }
+          });
+        },
+        fail(e) { reject(new Error((e && e.errMsg) || 'request failed')); }
+      });
+    });
+  };
+  /* 伪 DOM 上不会触发 confirm；小游戏页面用自己的确认交互 */
+  GameGlobal.confirm = function () { return false; };
 
   /* 时间基统一：performance.now() 与 rAF 回调时间戳必须同源，否则首帧 dt 异常。
      保留原生 rAF 做 vsync 调度，只把回调参数替换成 weixin performance 时基。 */
@@ -225,19 +269,34 @@
       catch (e) { console.error('[adapter] ' + type + ' handler', e); }
     });
   }
-  function onHUD(x, y) {
-    return !!(GameGlobal.__hud && GameGlobal.__hud.hitTest(x, y));
+  /* 统一由 __ui 分发：开奖页命中 HUD 按钮才拦截，其余给相机；
+     选号/记录页是全屏 UI，所有触摸交给页面，相机完全不响应。 */
+  function drawPage() { return !GameGlobal.__ui || GameGlobal.__ui.isDrawPage(); }
+  function uiTouch(type, t) {
+    if (!t || !GameGlobal.__ui) return false;
+    return !!GameGlobal.__ui.touch(type, t.clientX, t.clientY);
   }
 
   wx.onTouchStart(function (e) {
     const t = e.touches && e.touches[0];
     if (!t) return;
-    if (onHUD(t.clientX, t.clientY)) return;   // 点在按钮上：不把事件转给相机
-    emit('pointerdown', t);
+    if (drawPage()) {
+      if (uiTouch('start', t)) return;   // 点在按钮上：不把事件转给相机
+      emit('pointerdown', t);
+    } else uiTouch('start', t);
   });
-  wx.onTouchMove(function (e) { emit('pointermove', e.touches && e.touches[0]); });
-  wx.onTouchEnd(function (e) { emit('pointerup', e.changedTouches && e.changedTouches[0]); });
-  wx.onTouchCancel(function (e) { emit('pointercancel', e.changedTouches && e.changedTouches[0]); });
+  wx.onTouchMove(function (e) {
+    const t = e.touches && e.touches[0];
+    if (drawPage()) emit('pointermove', t); else uiTouch('move', t);
+  });
+  wx.onTouchEnd(function (e) {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (drawPage()) emit('pointerup', t); else uiTouch('end', t);
+  });
+  wx.onTouchCancel(function (e) {
+    const t = e.changedTouches && e.changedTouches[0];
+    if (drawPage()) emit('pointercancel', t); else uiTouch('cancel', t);
+  });
 
   console.log('[adapter] ready ' + W + 'x' + H + ' dpr=' + DPR);
 })();

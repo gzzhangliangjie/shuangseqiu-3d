@@ -1,19 +1,17 @@
 /* ============================================================
-   Canvas HUD：把 Web 版 DOM HUD 复刻成一张离屏 2D 纹理
+   UI 表面：一张离屏 2D 画布 + 一张 CanvasTexture + 一个全屏正交 quad
    ------------------------------------------------------------
-   小游戏只有一个上屏画布，且已交给 WebGL。这里用正交相机 + 全屏 quad
-   把 HUD 叠在 3D 画面之上：
-     - 不做每帧全屏 drawImage blit（省一次纹理拷贝）
-     - 只在伪 DOM 元素状态变化时重绘并 needsUpdate，平时零上传
-   伪 DOM 元素由 adapter.js 提供，HUD 直接读它们的 textContent / className /
-   disabled，所以 Web 端的 HUD 逻辑完全不用改。
+   开奖页画 HUD；选号页 / 记录页由 pages.js 通过 __ui.renderPage 画在
+   **同一张**画布上。页面切换不新增纹理、不新增全屏 blit，只有状态
+   变化时才 redraw + needsUpdate，平时零上传。
+   伪 DOM 元素由 adapter.js 提供，Web 端 HUD 逻辑一行不改。
    ============================================================ */
 (function () {
   'use strict';
 
   const THREE = require('./libs/three.js');
 
-  const cv = wx.createCanvas();                 // 离屏 2D 画布
+  const cv = wx.createCanvas();
   const ctx = cv.getContext('2d');
   const resultsEl = GameGlobal.document.getElementById('results');
   const phaseEl = GameGlobal.document.getElementById('phase');
@@ -39,9 +37,9 @@
   scene.add(quad);
 
   let W = 0, H = 0, S = 1, safeTop = 0, safeBottom = 0;
-  let L = null;
   let dirty = true;
   const buttons = [];
+  const M = {};                       // 布局参数，供 pages.js 复用
 
   function relayout() {
     const info = wx.getSystemInfoSync();
@@ -62,13 +60,15 @@
     const btnH = 42;
     const btnY = H - bottom - btnH;
     const slotY = btnY - 20 - slotR;
-    const btnW = Math.min(140, (W - 48) / 2 - 8);
+    const pad = 16, bGap = 8;
+    const bw = (W - pad * 2 - bGap * 2) / 3;
 
     buttons.length = 0;
-    buttons.push({ x: W / 2 - btnW - 8, y: btnY, w: btnW, h: btnH, el: startBtn, label: '开始摇奖' });
-    buttons.push({ x: W / 2 + 8, y: btnY, w: btnW, h: btnH, el: resetBtn, label: '重置' });
+    buttons.push({ id: 'start',  x: pad,                    y: btnY, w: bw, h: btnH, el: startBtn,  label: '开始摇奖' });
+    buttons.push({ id: 'reset',  x: pad + bw + bGap,        y: btnY, w: bw, h: btnH, el: resetBtn,  label: '重置' });
+    buttons.push({ id: 'picker', x: pad + (bw + bGap) * 2,  y: btnY, w: bw, h: btnH, el: null,      label: '选号' });
 
-    L = { slotR, gap, totalW, slotY, btnH, titleY: safeTop + 14 };
+    Object.assign(M, { W, H, S, safeTop, safeBottom, slotR, gap, totalW, slotY, btnH, btnY, pad, bGap, bw });
     dirty = true;
   }
 
@@ -82,31 +82,26 @@
     ctx.closePath();
   }
 
-  function redraw() {
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    ctx.setTransform(S, 0, 0, S, 0, 0);
-
-    /* 标题 */
+  /* ---------- 开奖页 HUD ---------- */
+  function drawHUD() {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'rgba(18,32,54,.9)';
     ctx.font = 'bold 18px sans-serif';
-    ctx.fillText('双色球 · 3D 摇奖', 16, L.titleY);
+    ctx.fillText('双色球 · 3D 摇奖', 16, safeTop + 14);
     ctx.fillStyle = 'rgba(70,95,130,.8)';
     ctx.font = '12px sans-serif';
-    ctx.fillText('拖动旋转视角 · 点击下方按钮开奖', 16, L.titleY + 25);
+    ctx.fillText('拖动旋转视角 · 点击下方按钮开奖', 16, safeTop + 39);
 
-    /* 7 个球槽（6 红 + 1 蓝） */
     const slots = resultsEl.children;
-    const x0 = (W - L.totalW) / 2;
+    const x0 = (W - M.totalW) / 2;
     for (let i = 0; i < 7; i++) {
       const el = slots[i];
       const filled = !!(el && el.classList && el.classList.contains('filled'));
       const isBlue = (i === 6);
-      const x = x0 + i * (L.slotR * 2 + L.gap) + L.slotR;
+      const x = x0 + i * (M.slotR * 2 + M.gap) + M.slotR;
       ctx.beginPath();
-      ctx.arc(x, L.slotY, L.slotR, 0, Math.PI * 2);
+      ctx.arc(x, M.slotY, M.slotR, 0, Math.PI * 2);
       ctx.fillStyle = filled ? (isBlue ? '#2878d0' : '#d8382f') : 'rgba(255,255,255,.6)';
       ctx.fill();
       ctx.lineWidth = 2;
@@ -114,34 +109,42 @@
       ctx.stroke();
       if (el && el.textContent) {
         ctx.fillStyle = filled ? '#ffffff' : 'rgba(40,60,90,.65)';
-        ctx.font = 'bold ' + Math.round(L.slotR * 0.92) + 'px sans-serif';
+        ctx.font = 'bold ' + Math.round(M.slotR * 0.92) + 'px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(el.textContent), x, L.slotY + 1);
+        ctx.fillText(String(el.textContent), x, M.slotY + 1);
       }
     }
 
-    /* 状态文字（原 Web 版已弱化，这里只作错误提示） */
     if (phaseEl && phaseEl.textContent && phaseEl.classList.contains('active')) {
       ctx.fillStyle = 'rgba(190,60,40,.92)';
       ctx.font = '13px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(String(phaseEl.textContent), W / 2, L.slotY + L.slotR + 16);
+      ctx.fillText(String(phaseEl.textContent), W / 2, M.slotY + M.slotR + 16);
     }
 
-    /* 按钮 */
     for (const b of buttons) {
       roundRect(b.x, b.y, b.w, b.h, 12);
-      ctx.fillStyle = b.el.disabled ? 'rgba(150,165,185,.35)' : 'rgba(28,68,128,.92)';
+      const dis = b.el && b.el.disabled;
+      ctx.fillStyle = dis ? 'rgba(150,165,185,.35)' :
+        (b.id === 'picker' ? 'rgba(37,53,77,.85)' : 'rgba(28,68,128,.92)');
       ctx.fill();
-      ctx.fillStyle = b.el.disabled ? 'rgba(255,255,255,.7)' : '#ffffff';
-      ctx.font = 'bold 15px sans-serif';
+      ctx.fillStyle = dis ? 'rgba(255,255,255,.7)' : '#ffffff';
+      ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
+  }
 
+  function redraw() {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.setTransform(S, 0, 0, S, 0, 0);
+    const ui = GameGlobal.__ui;
+    if (ui && !ui.isDrawPage()) ui.renderPage(ctx, W, H, M);
+    else drawHUD();
     tex.needsUpdate = true;
     dirty = false;
   }
@@ -157,7 +160,9 @@
   function hitTest(x, y) {
     for (const b of buttons) {
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
-        if (!b.el.disabled) b.el.click();
+        if (b.id === 'picker') {
+          if (GameGlobal.__ui) GameGlobal.__ui.open('picker');
+        } else if (!b.el.disabled) b.el.click();
         return true;
       }
     }
@@ -169,8 +174,10 @@
 
   GameGlobal.__hud = {
     markDirty() { dirty = true; },
-    draw: draw,
-    hitTest: hitTest,
-    relayout: relayout
+    draw,
+    hitTest,
+    relayout,
+    surface: { cv, ctx, tex, scene, camera },
+    metrics: M
   };
 })();

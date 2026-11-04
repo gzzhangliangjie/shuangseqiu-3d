@@ -44,10 +44,10 @@
 
 ## 本地仿真验证
 
-`sim/sim_real.js` 是网页物理逻辑的镜像实现，用于在不打开浏览器的情况下验证整条流程：
+`sim_real.js`（项目根目录）是网页物理逻辑的镜像实现，用于在不打开浏览器的情况下验证整条流程：
 
 ```bash
-node sim/sim_real.js
+node sim_real.js
 ```
 
 实测结果：红球机 6/6 全部出球并入位（全程约 35s，接近真实直播节奏），蓝球机 1/1。
@@ -69,6 +69,13 @@ Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PM
 
 - 画质：关 MSAA、DPR 封顶 2、Basic 阴影 512²、玻璃壳半透明近似（不用 `transmission`）、
   球纹理 256×128、球用 `MeshStandardMaterial` + 18 段几何；不启用 Bloom 后处理。
+- 纹理/内存：所有贴图绘制都用 `ctx.scale()` 保持原绘制坐标不变、只缩小 backing store。
+  背景墙 4160×600 → 2048×295，环境图 1024×512 → 512×256，地板 512² → 256²，
+  球壳 alphaMap 1024² → 512²；球贴图改为「单个 256×128 画布直接绘制」，
+  不再生成 512×256 中间位图（49×2=98 个 canvas → 49 个）；
+  49 颗球共用一份 `SphereGeometry`，两台机器共用一张 LOGO 纹理。
+  CPU 侧离屏位图合计约 **53MB → 12MB（-77%）**，上传 GPU 的纹理内存同步下降
+  （背景墙 / 球 / 地板 / alphaMap / LOGO 全部按新尺寸）。
 - 分辨率：`Platform` 适配层统一取视口（Web 用 `window`/`visualViewport`，小游戏用
   `wx.getSystemInfoSync()` / `wx.onWindowResize`），`applySize()` 平台无关、两端同一套逻辑；
   `resScale` 按实时帧率在 1 → 0.6 之间动态降档。
@@ -99,30 +106,59 @@ Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PM
 
 ```
 miniprogram/
-  game.js                 入口（加载顺序：adapter -> hud -> game-logic）
+  game.js                 入口（adapter -> data -> simlog -> hud -> pages -> game-logic）
   game.json               竖屏 / 隐藏状态栏
   project.config.json     开发者工具项目配置（appid 占位 touristappid）
-  adapter.js              DOM / canvas / 触摸 / 时间 / 音频适配层（自实现，零依赖）
-  hud.js                  Canvas HUD（离屏 2D -> CanvasTexture -> 正交 quad）
-  build.js                构建脚本：ESM -> CommonJS，零第三方依赖
-  libs/                   build.js 生成：three.js / OrbitControls.js / RoomEnvironment.js
-  src/game-logic.js       build.js 生成：从 index.html 的 module 主体抽出
+  adapter.js              DOM / canvas / 触摸 / 时间 / 音频 / wx storage / fetch 适配
+  hud.js                  UI 表面：一张离屏 2D 画布 + CanvasTexture + 正交 quad（开奖页 HUD）
+  pages.js                选号 / 分布 / 记录三个页面（自绘图表与控件，共用 hud 的同一张画布）
+  build.js                构建脚本：ESM -> CommonJS + 抽取 Web 端算法，零第三方依赖
+  libs/                   build.js 生成或复制：three r160 / OrbitControls / RoomEnvironment /
+                          ssq-data（2083 期历史）/ sim-real（物理内核）
+  src/game-logic.js       build.js 生成：index.html 的 module 主体
+  src/analysis.js         build.js 生成：picker 的统计 / 权重 / 评分 / 生成算法
+  src/simlog.js           build.js 生成：index.html 的 SimLog（8 项形态评估 + 持久化）
 ```
 
-**`index.html` 与 `_vendor/` 是唯一真源**，Web 端改完执行一次即可同步：
+**`index.html`、`picker/index.html`、`picker/data.js`、`sim_real.js`、`_vendor/` 是唯一真源**，
+Web 端改完执行一次即可同步：
 
 ```bash
 node miniprogram/build.js
 ```
 
 小游戏不支持 importmap / 裸模块名 / ES module 包加载，构建脚本把本地 `_vendor/` 的 ESM
-转成原生 CommonJS；另外只做两处小游戏专属注入（Web 源码不动）：
-`WebGLRenderer` 显式传入上屏 canvas、主循环渲染后叠加 HUD。因此 Web 与小游戏的
-3D 场景、物理、开奖流程、分辨率 / 构图适配共用同一份逻辑。
+转成原生 CommonJS，并抽取 Web 端的选号算法与 SimLog 逻辑；只做三处小游戏专属注入
+（Web 源码不动）：`WebGLRenderer` 显式传入上屏 canvas、主循环按页面决定是否渲 3D、
+渲染后统一叠加 UI 层。因此 Web 与小游戏共用同一份 3D 场景、物理、开奖流程、
+分辨率 / 构图适配、历史数据与选号算法。
 
-HUD 不依赖 DOM：伪 DOM 元素的 `textContent` / `className` / `disabled` 变化触发
-HUD 重绘，仅在状态变化时上传纹理，没有每帧全屏 blit。触摸事件经适配层转成
-pointer 事件交给 OrbitControls（保留拖拽旋转）。
+UI 层不依赖 DOM：伪 DOM 元素的 `textContent` / `className` / `disabled` 变化触发重绘，
+仅在状态变化时上传纹理；**开奖页与选号/记录页共用同一张离屏画布**，切换页面不新增
+纹理、不做每帧全屏 blit。开奖页触摸转 pointer 事件交给 OrbitControls；
+选号页的触摸全部由页面接管（含滚动、点号、切 tab）。
+
+### 小游戏内的选号工具
+
+开奖页底部第三个按钮「选号」进入，三个 tab：
+
+- **分布**：2083 期历史频次（红 33 / 蓝 16）、和值分布、冷热号与遗漏值，
+  全部用 Canvas 自绘柱状图，**不引入 Chart.js**（小游戏里它要整套 DOM 适配且 >200KB）。
+- **选号**：手动点号、机选一注、按历史形态评分的「智能推荐」（复用 Web 版
+  `generate()` 算法）、保存选号；「本地物理摇一期」直接调 `sim_real.js` 物理内核
+  在手机本地出号并写入开奖记录，**不需要电脑上的 Node 服务**。
+- **记录**：SimLog 的开奖记录 + 8 项形态评估（可展开细项）+ 与已保存选号的中奖等级对比，
+  数据落在 `wx storage`（`localStorage` 适配），杀掉小游戏也不丢。
+
+`picker/sim_server.js` 仍保留给 Web 端做批量回测；小游戏可选连它同步结果：
+在 `game.js` 里把 `GameGlobal.__SIM_REMOTE` 置 `true`、`__SIM_BASE` 改成 PC 的局域网 IP，
+并在开发者工具关闭「不校验合法域名」。默认关闭，纯本地运行零依赖。
+
+### 包体与内存
+
+- 主包约 **1.7MB**（three r160 1.24MB + 历史数据 63KB + 物理内核 26KB + UI/主逻辑），
+  远低于小游戏主包限额；生成物已提交，导入即可跑。
+- 运行时不再有 4096 宽贴图、也不再有 98 个离屏 canvas（见上「纹理/内存」）。
 
 ### 导入步骤
 
@@ -133,14 +169,12 @@ pointer 事件交给 OrbitControls（保留拖拽旋转）。
 `game.json` 默认 `portrait`（竖屏，`fitFov` 已保证两台机器完整入画）；想要横屏改成
 `"landscape"` 即可，分辨率与构图逻辑无需改动。
 
-### 范围与已知限制
+### 已知差异
 
-- **未迁移**：`picker/` 选号工具、历史图表（Chart.js CDN）、`picker/sim_server.js`（Node 服务）、
-  `SimLog` 模拟结果面板——这些依赖 DOM 或 Node，小游戏内跑不了，需要时另写页面或走 web-view。
+- 小游戏版把 Web 的 60 余个 DOM 控件精简成三个 Canvas 页面，保留全部核心能力
+  （分布统计 / 选号生成 / 手动点号 / 物理出号 / 记录评估 / 中奖对比），
+  但不含 Web 端的批量回测、走势表格、参数滑块等高级控件。
 - 程序化音效走 `wx.createWebAudioContext()`（不支持时静默降级，不影响开奖）。
-- 主包约 1.6MB（three r160 约 1.24MB），在小游戏主包限额内。
-- **真机需验证**：背景墙贴图是 4160×600，超过部分手机 GPU 的 4096 纹理上限，
-  若背景墙显示异常需降采样；球纹理每颗会创建 2 个离屏 canvas（共约 98 个），
-  低端机若内存紧张，可复用 512×256 的临时画布再缩到 256×128。
-- 本仓库的 `main` = 移动优化版 + 小游戏骨架；`full-fx` 分支 / `pre-mobile-opt` tag =
+- 本地物理出号是同步计算，手机上约 1~2 秒，期间会先显示「计算中」提示。
+- 本仓库的 `main` = 移动优化版 + 小游戏完整功能；`full-fx` 分支 / `pre-mobile-opt` tag =
   简化前的完整高画质桌面版，可用 `git checkout full-fx` 回退对比。
