@@ -69,8 +69,9 @@ Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PM
 
 - 画质：关 MSAA、DPR 封顶 2、Basic 阴影 512²、玻璃壳半透明近似（不用 `transmission`）、
   球纹理 256×128、球用 `MeshStandardMaterial` + 18 段几何；不启用 Bloom 后处理。
-- 分辨率：`Platform` 适配层统一取视口（Web 用 `window`/`visualViewport`，小游戏预留 `wx.*` 分支），
-  `applySize()` 平台无关；`resScale` 按实时帧率在 1 → 0.6 之间动态降档。
+- 分辨率：`Platform` 适配层统一取视口（Web 用 `window`/`visualViewport`，小游戏用
+  `wx.getSystemInfoSync()` / `wx.onWindowResize`），`applySize()` 平台无关、两端同一套逻辑；
+  `resScale` 按实时帧率在 1 → 0.6 之间动态降档。
 - 3D 构图：`fitFov(aspect)` 按宽高比动态放宽垂直视角，保证两台机器在竖屏下完整入画；
   宽屏恒为 30°（原版构图不变）。
 - HUD：`viewport-fit=cover` + `env(safe-area-inset-*)` 避让刘海/Home 条，
@@ -87,3 +88,59 @@ Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PM
 
 本地起服务：在项目目录执行 `python3 -m http.server 8000`，浏览器打开 `http://127.0.0.1:8000/index.html`；
 若要用选号工具的完整功能，改用 `node picker/sim_server.js`（端口 8731）。
+
+## 微信小游戏（自用，不发布）
+
+`miniprogram/` 是可直接导入「微信开发者工具」的小游戏项目。**自用不需要上架审核**：
+开发者工具里用测试号 / 无 AppID 模式打开，点「预览」扫码即可在自己手机微信里运行，
+永远不点「上传 + 提交审核」就行。
+
+### 目录与构建
+
+```
+miniprogram/
+  game.js                 入口（加载顺序：adapter -> hud -> game-logic）
+  game.json               竖屏 / 隐藏状态栏
+  project.config.json     开发者工具项目配置（appid 占位 touristappid）
+  adapter.js              DOM / canvas / 触摸 / 时间 / 音频适配层（自实现，零依赖）
+  hud.js                  Canvas HUD（离屏 2D -> CanvasTexture -> 正交 quad）
+  build.js                构建脚本：ESM -> CommonJS，零第三方依赖
+  libs/                   build.js 生成：three.js / OrbitControls.js / RoomEnvironment.js
+  src/game-logic.js       build.js 生成：从 index.html 的 module 主体抽出
+```
+
+**`index.html` 与 `_vendor/` 是唯一真源**，Web 端改完执行一次即可同步：
+
+```bash
+node miniprogram/build.js
+```
+
+小游戏不支持 importmap / 裸模块名 / ES module 包加载，构建脚本把本地 `_vendor/` 的 ESM
+转成原生 CommonJS；另外只做两处小游戏专属注入（Web 源码不动）：
+`WebGLRenderer` 显式传入上屏 canvas、主循环渲染后叠加 HUD。因此 Web 与小游戏的
+3D 场景、物理、开奖流程、分辨率 / 构图适配共用同一份逻辑。
+
+HUD 不依赖 DOM：伪 DOM 元素的 `textContent` / `className` / `disabled` 变化触发
+HUD 重绘，仅在状态变化时上传纹理，没有每帧全屏 blit。触摸事件经适配层转成
+pointer 事件交给 OrbitControls（保留拖拽旋转）。
+
+### 导入步骤
+
+1. 微信开发者工具 → 导入项目 → 目录选 **`miniprogram/`**（不是仓库根目录）
+2. AppID 选「测试号」/「不使用 AppID」（`project.config.json` 里 `touristappid` 是占位，可替换）
+3. 编译类型已设为 `game`；点「预览」，手机微信扫码即可运行
+
+`game.json` 默认 `portrait`（竖屏，`fitFov` 已保证两台机器完整入画）；想要横屏改成
+`"landscape"` 即可，分辨率与构图逻辑无需改动。
+
+### 范围与已知限制
+
+- **未迁移**：`picker/` 选号工具、历史图表（Chart.js CDN）、`picker/sim_server.js`（Node 服务）、
+  `SimLog` 模拟结果面板——这些依赖 DOM 或 Node，小游戏内跑不了，需要时另写页面或走 web-view。
+- 程序化音效走 `wx.createWebAudioContext()`（不支持时静默降级，不影响开奖）。
+- 主包约 1.6MB（three r160 约 1.24MB），在小游戏主包限额内。
+- **真机需验证**：背景墙贴图是 4160×600，超过部分手机 GPU 的 4096 纹理上限，
+  若背景墙显示异常需降采样；球纹理每颗会创建 2 个离屏 canvas（共约 98 个），
+  低端机若内存紧张，可复用 512×256 的临时画布再缩到 256×128。
+- 本仓库的 `main` = 移动优化版 + 小游戏骨架；`full-fx` 分支 / `pre-mobile-opt` tag =
+  简化前的完整高画质桌面版，可用 `git checkout full-fx` 回退对比。
