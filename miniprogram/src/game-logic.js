@@ -39,6 +39,7 @@ const AudioFX = (() => {
   let fallBuf = null, stirBuf = null;
   let stirSrc = null, stirGain = null, stirLv = 0;
   let rawSet = null;                          /* 已合成的原始数据（不含 AudioBuffer） */
+  let sUploaded = false;                      /* 已灌进 AudioBuffer，rawSet 随之释放 */
   let hitBuf = null, clunkBuf = null, slideBuf = null;
   let outBuf = null, chimeBuf = null, tickBuf = null;
   let tFall = -1;                             /* -1：保证第一次调用不被节流挡掉 */
@@ -60,19 +61,26 @@ const AudioFX = (() => {
         catch (e) { rawSet = null; buildSamples(ctx.sampleRate || 44100); }
       }
       const _t1 = performance.now();
-      try { uploadSamples(); }
+      let upOk = false;
+      try { upOk = uploadSamples(); }
       catch (e) {
         /* createBuffer 不接受 22.05k：按设备采样率重算再传一次 */
-        buildSamples(ctx.sampleRate || 44100);
-        uploadSamples();
+        try { buildSamples(ctx.sampleRate || 44100); upOk = uploadSamples(); }
+        catch (e2) { upOk = false; }      /* 降级也失败：静音继续，异常绝不能冒到点击回调里 */
       }
+      /* 原始 PCM 只在重传时需要；AudioBuffer 建好后释放，省 ~730 KB 常驻。
+         清空必须放在上传成功之后：失败路径还要靠它按设备采样率重算。 */
+      if (upOk) { rawSet = null; sUploaded = true; }
       if (location.search.indexOf('debug') >= 0)
         window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(performance.now() - _t1).toFixed(1),
                        primed: _t1 - _t0 < 1 };
       startStirLoop();
     }
-    if (ctx.state === 'suspended' && ctx.resume) {
-      /* 无用户手势时 resume 会被拒绝，这里必然失败一次，吞掉即可；
+    if (ctx.state !== 'running' && ctx.resume) {
+      /* 刻意不写 === 'suspended'：个别实现 state 是 undefined（iOS 被中断后为 'interrupted'），
+         那样判断永远不成立 → 真机全程静音但不报错。非 running 一律尝试 resume，
+         已 running 时不会走到这里，多调也没有副作用。
+         无用户手势时 resume 会被拒绝，这里必然失败一次，吞掉即可；
          真正的恢复发生在点击后的 playBuf → ensure() 里。 */
       const pr = ctx.resume();
       if (pr && pr.catch) pr.catch(() => {});
@@ -547,9 +555,10 @@ const AudioFX = (() => {
   }
 
   /* 空闲预合成：只算数据，不建 AudioContext（无需用户手势）。
-     首次点击时 rawSet 已在，只剩 createBuffer + 拷贝。 */
+     首次点击时 rawSet 已在，只剩 createBuffer + 拷贝。
+     sUploaded 之后 rawSet 被释放，此时不能因为 rawSet 为空就重算一遍（白费 150ms + 又占 730KB）。 */
   function prime() {
-    if (rawSet) return true;
+    if (sUploaded || rawSet) return true;
     try { buildSamples(SR); return true; } catch (e) { rawSet = null; return false; }
   }
 
@@ -568,7 +577,7 @@ const AudioFX = (() => {
       ok: true, sr: stirBuf.sampleRate, dur: stirBuf.duration,
       peak: +pk.toFixed(3), rms: +Math.sqrt(ss / m).toFixed(4),
       gain: stirGain ? +stirGain.gain.value.toFixed(3) : -1,
-      playing: !!stirSrc, ctxState: ctx && ctx.state, muted
+      playing: !!stirSrc, ctxState: ctx && ctx.state, muted, uploaded: sUploaded
     };
   };
   if (location.search.indexOf('debug') >= 0) window.__AFX = dbg;
@@ -2136,7 +2145,9 @@ function updateMachine(m, dt) {
           const red = state.drawRed.slice().sort((a, b) => a - b);
           const blue = state.drawBlue;
           if (red.length === 6 && blue >= 1 && window.SimLog) {
-            window.SimLog.onDrawComplete(red, blue);
+            /* 选号页「带这注去 3D 摇奖」会把注挂在 __PENDING_PICK 上，
+               一起入列，回到选号页即可结算对照（Web 端该变量恒为 undefined → null） */
+            window.SimLog.onDrawComplete(red, blue, window.__PENDING_PICK || null);
           }
         }, 2500);
       }

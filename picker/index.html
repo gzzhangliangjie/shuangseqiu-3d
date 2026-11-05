@@ -1086,13 +1086,15 @@ document.getElementById('lnkMachine').onclick=function(){
     }
     t.innerHTML=msg; btn.textContent=old;
   }
-  if(location.protocol==='file:'){ location.href='../index.html'; return; }
+  /* 进 3D 页一律带 raw=1：index.html 的落地重定向看到它才不会再弹回本页 */
+  function withRaw(u){ return u + (u.indexOf('?')>=0?'&':'?') + 'raw=1'; }
+  if(location.protocol==='file:'){ location.href=withRaw('../index.html'); return; }
   btn.textContent='检测中…';
   probe3D().then(function(u){
-    if(u) location.href=u;
+    if(u) location.href=withRaw(u);
     else tip('当前页面由一个静态服务托管，找不到 3D 摇奖机页面。请二选一：<br>'+
-      '① 在项目目录执行 <code>node picker/sim_server.js</code>，浏览器打开 <code>http://127.0.0.1:8731/index.html</code>；<br>'+
-      '② 直接双击文件 <code>E:/shuangseqiu-3d-sim/index.html</code>。');
+      '① 在项目目录执行 <code>node picker/sim_server.js</code>，浏览器打开 <code>http://127.0.0.1:8731/machine</code>；<br>'+
+      '② 直接双击文件 <code>E:/shuangseqiu-3d-sim/index.html</code>（会自动跳到本页，点「打开 3D 摇奖机」即进）。');
   });
 };
 document.getElementById('lnkSim3dGo').onclick=document.getElementById('lnkMachine').onclick;

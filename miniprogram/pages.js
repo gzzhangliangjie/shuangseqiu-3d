@@ -20,8 +20,10 @@
   const A = createAnalysis(DATA);
 
   const KEY_PICKS = 'ssq_mini_saved_picks_v1';
-  let current = 'draw';                 // draw | tool
-  let tab = 'dist';                     // dist | pick | log
+  /* 落地页是「选号」而不是 3D：主流程为 选号 → 带这注去 3D 摇奖 → 摇完回选号看对照。
+     3D 退化为子页，从选号页顶部「← 3D 开奖」进入（hud.js 的「选号」按钮则反向回这里）。 */
+  let current = 'tool';                 // draw | tool
+  let tab = 'pick';                     // dist | pick | log
   let scrollY = 0, contentH = 0;
   let regions = [];                     // 本次绘制的可点击区域（屏幕坐标）
   let startY = 0, startRegion = null, moved = false;
@@ -32,6 +34,10 @@
   let logRows = [];
   let pick = { red: [], blue: 0 };
   let busy = false;
+
+  /* 跨页状态：选号页写入「带注」，3D 页摇完由 index.html 把注挂到记录上，
+     回到选号页再结算成对照结果。hud.js 只读 pending 用于按钮文案/提示条。 */
+  const MATCH = GameGlobal.__match = { pending: null, result: null };
 
   try { saved = JSON.parse(GameGlobal.localStorage.getItem(KEY_PICKS) || '[]') || []; }
   catch (e) { saved = []; }
@@ -46,7 +52,7 @@
   function open(page) {
     current = page;
     scrollY = 0; status = '';
-    if (page === 'tool') refreshLog();
+    if (page === 'tool') { syncMatch(); refreshLog(); }
     dirty();
   }
   function close() { open('draw'); }
@@ -55,6 +61,39 @@
   function refreshLog() {
     const S = GameGlobal.SimLog;
     logRows = (S && S.snapshot) ? S.snapshot().slice().reverse() : [];
+  }
+
+  /* 把「上一次带注摇奖」结算成对照结果。
+     数据源是 SimLog 最后一条记录：rec.pick 由 index.html 在开奖完成时挂上（仅内存，不落盘）。
+     同一期只算一次，避免每次切页都重算/闪烁。 */
+  function syncMatch() {
+    const S = GameGlobal.SimLog;
+    const rows = (S && S.snapshot) ? S.snapshot() : [];
+    const last = rows.length ? rows[rows.length - 1] : null;
+    /* 用记录对象的引用判「同一期」，不用时间戳：同一毫秒内连摇两期时
+       time 会撞车，旧的 `MATCH.result.time === last.time` 会误判成已结算。 */
+    if (last && last.pick && !(MATCH.result && MATCH.result.rec === last)) {
+      const p = last.pick, d = { red: last.red, blue: last.blue };
+      const redHit = p.red.filter(v => d.red.indexOf(v) >= 0).length;
+      const blueHit = p.blue === d.blue ? 1 : 0;
+      const level = (A.prizeOf ? A.prizeOf(p, d) : 0) || 0;
+      MATCH.result = {
+        pick: { red: p.red.slice(), blue: p.blue },
+        draw: { red: d.red.slice(), blue: d.blue },
+        redHit, blueHit, level, time: last.time, rec: last
+      };
+      dirty();
+    }
+    /* 离开 3D 页即视为本次「带注」意图已结束：没摇（用户中途返回）也不该留给下一期 */
+    clearPending();
+  }
+  function clearPending() {
+    MATCH.pending = null;
+    GameGlobal.__PENDING_PICK = null;
+  }
+  function prizeLabelOf(rec) {
+    if (rec && rec.pick && A.prizeOf) return A.LVN[A.prizeOf(rec.pick, { red: rec.red, blue: rec.blue })] || '未中奖';
+    return comparePrize(rec);
   }
 
   /* ---------- 绘制小工具 ---------- */
@@ -170,6 +209,7 @@
     if (i >= 0) pick.red.splice(i, 1);
     else if (pick.red.length < 6) pick.red.push(n);
     pick.red.sort((a, b) => a - b);
+    clearPending();                    /* 改过号就不再是「带进去的那一注」 */
     dirty();
   }
   function quickPick() {
@@ -177,6 +217,7 @@
     const r = [];
     for (let i = 0; i < 6; i++) r.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
     pick = { red: r.sort((a, b) => a - b), blue: 1 + Math.floor(Math.random() * 16) };
+    clearPending();
     status = '已机选一注';
     dirty();
   }
@@ -188,6 +229,16 @@
     recs = out.picks;
     status = '按历史形态评分生成 ' + recs.length + ' 注（点击载入）';
     dirty();
+  }
+  /* 带着当前这注切到 3D 页：pending 交给 3D，摇完由 index.html 挂到记录上 */
+  function goDraw() {
+    if (pick.red.length !== 6 || !pick.blue) {
+      status = '请先选满 6 红 + 1 蓝，再去 3D 摇奖'; dirty(); return;
+    }
+    MATCH.pending = { red: pick.red.slice().sort((a, b) => a - b), blue: pick.blue };
+    GameGlobal.__PENDING_PICK = MATCH.pending;
+    status = '';
+    open('draw');
   }
   function savePick() {
     if (pick.red.length !== 6 || !pick.blue) { status = '请先选满 6 红 + 1 蓝'; dirty(); return; }
@@ -204,9 +255,12 @@
       let d = null;
       try { d = PHYS.shakeOnce(); } catch (e) { status = '仿真异常：' + e.message; }
       if (d && d.red && d.red.length === 6) {
-        if (GameGlobal.SimLog) GameGlobal.SimLog.onDrawComplete(d.red, d.blue);
+        /* 带着当前注摇（选满了才带），摇完立刻结算，不切页也能看到对照 */
+        const pk = (pick.red.length === 6 && pick.blue)
+          ? { red: pick.red.slice().sort((a, b) => a - b), blue: pick.blue } : null;
+        if (GameGlobal.SimLog) GameGlobal.SimLog.onDrawComplete(d.red, d.blue, pk);
         status = '已摇出 ' + d.red.map(pad2).join(' ') + ' + ' + pad2(d.blue) + '（已入记录）';
-        refreshLog();
+        refreshLog(); syncMatch();
       } else if (!status || status.indexOf('异常') < 0) status = '本次仿真未出满，请重试';
       busy = false; dirty();
     }, 120);   /* 先让「计算中」这一帧画出来，再跑同步物理仿真 */
@@ -233,6 +287,22 @@
       }
     }
     y += 94;
+
+    /* 上一次带注摇奖的对照（只在有结果时出现，不占常态版面） */
+    if (MATCH.result) {
+      const r = MATCH.result;
+      card(g, x, y, w, 82);
+      txt(g, '上次摇奖对照', x + 12, y + 16, 12, C.sub);
+      txt(g, r.level ? A.LVN[r.level] : '未中奖', x + w - 12, y + 16, 13,
+        r.level ? C.red : C.sub, 'right', true);
+      for (let k = 0; k < 6; k++) ball(g, x + 22 + k * 24, y + 42, 10, r.draw.red[k], false);
+      ball(g, x + 22 + 6 * 24 + 6, y + 42, 10, r.draw.blue, true);
+      txt(g, '你的注 ' + r.pick.red.map(pad2).join(' ') + ' + ' + pad2(r.pick.blue),
+        x + 12, y + 66, 10, C.sub);
+      txt(g, '红中 ' + r.redHit + ' · 蓝' + (r.blueHit ? '中' : '未中'),
+        x + w - 12, y + 66, 11, r.redHit || r.blueHit ? C.good : C.sub, 'right', true);
+      y += 92;
+    }
 
     const b3 = (w - 16) / 3;
     btn(g, x, y, b3, 40, '智能推荐', smartPick);
@@ -277,14 +347,17 @@
         for (let k = 0; k < 6; k++) ball(g, x + 28 + k * 26, ry + 18, 11, p.red[k], false);
         ball(g, x + 28 + 6 * 26 + 8, ry + 18, 11, p.blue, true);
         R(x + 10, ry, w - 20, 36, (function (q) {
-          return function () { pick = { red: q.red.slice(), blue: q.blue }; status = '已载入推荐注'; dirty(); };
+          return function () { pick = { red: q.red.slice(), blue: q.blue }; clearPending(); status = '已载入推荐注'; dirty(); };
         })(p));
       }
       y += 30 + recs.length * 40 + 10;
     }
 
-    btn(g, x, y, w, 42, '本地物理摇一期（无需电脑服务）', localDraw, { fill: '#6b4c93' });
-    y += 52;
+    /* 主路径：带这注去 3D 摇，摇完自动回填对照；次路径：本地快摇不等动画 */
+    btn(g, x, y, w, 46, '带这注去 3D 摇奖', goDraw, { fill: C.accent, size: 15 });
+    y += 54;
+    btn(g, x, y, w, 38, '本地快摇一期（不等动画）', localDraw, { fill: '#6b4c93', size: 12 });
+    y += 48;
     return y - top;
   }
 
@@ -332,7 +405,7 @@
       const br = 12;
       for (let k = 0; k < 6; k++) ball(g, x + 24 + k * 27, y + 44, br, rec.red[k], false);
       ball(g, x + 24 + 6 * 27 + 6, y + 44, br, rec.blue, true);
-      const lv = comparePrize(rec);
+      const lv = prizeLabelOf(rec);
       txt(g, (ev.verdict || '') + ' ' + (ev.pass || 0) + '/8', x + 12, y + 70, 12,
         ev.level === 'good' ? C.good : (ev.level === 'bad' ? C.warn : C.ink));
       if (lv) txt(g, lv, x + w - 12, y + 70, 12, lv === '未中奖' ? C.sub : C.red, 'right', true);
@@ -432,6 +505,10 @@
     return true;
   }
 
+  /* 启动即落地选号页：open('tool') 会顺带做一次记录同步与「带注」结算，
+     免得首屏切到选号 tab 时 logRows / MATCH.result 还是空的。 */
+  open('tool');
+
   GameGlobal.__ui = {
     current: function () { return current; },
     isDrawPage,
@@ -439,6 +516,8 @@
     close,
     renderPage,
     touch,
+    /* 画布 UI 没有 DOM 可查，留一个点击区的只读快照便于排查（也供离线冒烟测试） */
+    regions() { return regions.slice(); },
     draw(renderer) { hud.draw(renderer); }
   };
 

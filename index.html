@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>双色球 · 勿忘草 Myosotis 摇奖机</title>
+<script>
+/* 落地页 = 选号工具：本页是 3D 摇奖机，已降为「选号页」的子页。
+   - 选号页的「打开 3D 摇奖机」会带 ?raw=1 进来，否则两边会互相重定向成环；
+   - ?debug 也留在本页（调渲染 / 拿 window.__DBG 用）；
+   - hash 原样带给选号页：3D 结果就是靠 #s3d=… 随链接传过去的。
+   放在 <head> 最前面，避免 3D 场景先加载一遍再跳走。 */
+(function () {
+  if (/[?&](raw=1|debug)\b/.test(location.search)) return;
+  location.replace('picker/index.html' + location.hash);
+})();
+</script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; }
@@ -172,7 +183,7 @@
 <div id="controls">
   <button id="startBtn">开始摇奖</button>
   <button id="resetBtn">重 置</button>
-  <button id="pickerBtn" title="打开双色球选号工具（历史分布 + 物理摇奖对接）">选号工具 →</button>
+  <button id="pickerBtn" title="返回选号工具（历史分布 + 带注进 3D）">← 返回选号</button>
 </div>
 
 <div id="simPanel" class="collapsed">
@@ -332,6 +343,7 @@ const AudioFX = (() => {
   let fallBuf = null, stirBuf = null;
   let stirSrc = null, stirGain = null, stirLv = 0;
   let rawSet = null;                          /* 已合成的原始数据（不含 AudioBuffer） */
+  let sUploaded = false;                      /* 已灌进 AudioBuffer，rawSet 随之释放 */
   let hitBuf = null, clunkBuf = null, slideBuf = null;
   let outBuf = null, chimeBuf = null, tickBuf = null;
   let tFall = -1;                             /* -1：保证第一次调用不被节流挡掉 */
@@ -353,19 +365,26 @@ const AudioFX = (() => {
         catch (e) { rawSet = null; buildSamples(ctx.sampleRate || 44100); }
       }
       const _t1 = performance.now();
-      try { uploadSamples(); }
+      let upOk = false;
+      try { upOk = uploadSamples(); }
       catch (e) {
         /* createBuffer 不接受 22.05k：按设备采样率重算再传一次 */
-        buildSamples(ctx.sampleRate || 44100);
-        uploadSamples();
+        try { buildSamples(ctx.sampleRate || 44100); upOk = uploadSamples(); }
+        catch (e2) { upOk = false; }      /* 降级也失败：静音继续，异常绝不能冒到点击回调里 */
       }
+      /* 原始 PCM 只在重传时需要；AudioBuffer 建好后释放，省 ~730 KB 常驻。
+         清空必须放在上传成功之后：失败路径还要靠它按设备采样率重算。 */
+      if (upOk) { rawSet = null; sUploaded = true; }
       if (location.search.indexOf('debug') >= 0)
         window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(performance.now() - _t1).toFixed(1),
                        primed: _t1 - _t0 < 1 };
       startStirLoop();
     }
-    if (ctx.state === 'suspended' && ctx.resume) {
-      /* 无用户手势时 resume 会被拒绝，这里必然失败一次，吞掉即可；
+    if (ctx.state !== 'running' && ctx.resume) {
+      /* 刻意不写 === 'suspended'：个别实现 state 是 undefined（iOS 被中断后为 'interrupted'），
+         那样判断永远不成立 → 真机全程静音但不报错。非 running 一律尝试 resume，
+         已 running 时不会走到这里，多调也没有副作用。
+         无用户手势时 resume 会被拒绝，这里必然失败一次，吞掉即可；
          真正的恢复发生在点击后的 playBuf → ensure() 里。 */
       const pr = ctx.resume();
       if (pr && pr.catch) pr.catch(() => {});
@@ -840,9 +859,10 @@ const AudioFX = (() => {
   }
 
   /* 空闲预合成：只算数据，不建 AudioContext（无需用户手势）。
-     首次点击时 rawSet 已在，只剩 createBuffer + 拷贝。 */
+     首次点击时 rawSet 已在，只剩 createBuffer + 拷贝。
+     sUploaded 之后 rawSet 被释放，此时不能因为 rawSet 为空就重算一遍（白费 150ms + 又占 730KB）。 */
   function prime() {
-    if (rawSet) return true;
+    if (sUploaded || rawSet) return true;
     try { buildSamples(SR); return true; } catch (e) { rawSet = null; return false; }
   }
 
@@ -861,7 +881,7 @@ const AudioFX = (() => {
       ok: true, sr: stirBuf.sampleRate, dur: stirBuf.duration,
       peak: +pk.toFixed(3), rms: +Math.sqrt(ss / m).toFixed(4),
       gain: stirGain ? +stirGain.gain.value.toFixed(3) : -1,
-      playing: !!stirSrc, ctxState: ctx && ctx.state, muted
+      playing: !!stirSrc, ctxState: ctx && ctx.state, muted, uploaded: sUploaded
     };
   };
   if (location.search.indexOf('debug') >= 0) window.__AFX = dbg;
@@ -2429,7 +2449,9 @@ function updateMachine(m, dt) {
           const red = state.drawRed.slice().sort((a, b) => a - b);
           const blue = state.drawBlue;
           if (red.length === 6 && blue >= 1 && window.SimLog) {
-            window.SimLog.onDrawComplete(red, blue);
+            /* 选号页「带这注去 3D 摇奖」会把注挂在 __PENDING_PICK 上，
+               一起入列，回到选号页即可结算对照（Web 端该变量恒为 undefined → null） */
+            window.SimLog.onDrawComplete(red, blue, window.__PENDING_PICK || null);
           }
         }, 2500);
       }
@@ -2645,6 +2667,11 @@ Platform.onResize(applySize);
 
   var list = [], base = null;
   var KEY = 'ssq3d_sim_results_v1';
+  /* 只留最近 MAX_KEEP 期。每条带 8 项形态评估，实测约 724B；不设上限的话
+     storage 单 key 1MB 只够约 1450 条，且每次开奖都要同步重写整包。
+     裁剪放在 render/save 里做，任何写入路径（本地摇奖 / 远程合并 / 载入）都覆盖到。 */
+  var MAX_KEEP = 10;
+  function capList() { if (list.length > MAX_KEEP) list = list.slice(list.length - MAX_KEEP); }
 
   /* ---------- 历史基线 ---------- */
   function bump(o, k) { o[k] = (o[k] || 0) + 1; }
@@ -2760,6 +2787,7 @@ Platform.onResize(applySize);
     return h;
   }
   function render() {
+    capList();                         /* 与 save 同步裁剪，界面条数和存储不会打架 */
     var box = document.getElementById('simList');
     var emp = document.getElementById('simEmpty');
     document.getElementById('simCount').textContent = list.length;
@@ -2838,6 +2866,7 @@ Platform.onResize(applySize);
   }
   function save() {
     try {
+      capList();                       /* 落盘前裁剪：storage 里永远只有最近 10 期 */
       /* 连评估结果一起落盘，选号工具读取后无需重算历史基线 */
       localStorage.setItem(KEY, JSON.stringify(pack()));
     } catch (e) {}
@@ -2881,12 +2910,14 @@ Platform.onResize(applySize);
   }
 
   window.SimLog = {
-    /* 摇完一期直接入列并评估，不再询问 */
-    onDrawComplete: function (red, blue) {
+    /* 摇完一期直接入列并评估，不再询问。
+       pick 可选：带注摇奖时传入，只留在内存（pack 不落盘），供选号页回填对照。 */
+    onDrawComplete: function (red, blue, pick) {
       var r = red.slice().sort(function (a, b) { return a - b; });
       var prev = list.length ? list[list.length - 1].red
         : (window.SSQ_DATA ? window.SSQ_DATA[window.SSQ_DATA.length - 1][1] : null);
       var rec = { red: r, blue: blue, time: Date.now(), ev: evaluate(r, blue, prev) };
+      if (pick && pick.red && pick.red.length === 6) rec.pick = { red: pick.red.slice(), blue: pick.blue };
       list.push(rec);
       render(); save(); remoteSave();
       showNotice(rec, list.length - 1);

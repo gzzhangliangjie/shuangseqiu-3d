@@ -66,7 +66,7 @@
     buttons.length = 0;
     buttons.push({ id: 'start',  x: pad,                    y: btnY, w: bw, h: btnH, el: startBtn,  label: '开始摇奖' });
     buttons.push({ id: 'reset',  x: pad + bw + bGap,        y: btnY, w: bw, h: btnH, el: resetBtn,  label: '重置' });
-    buttons.push({ id: 'picker', x: pad + (bw + bGap) * 2,  y: btnY, w: bw, h: btnH, el: null,      label: '选号' });
+    buttons.push({ id: 'picker', x: pad + (bw + bGap) * 2,  y: btnY, w: bw, h: btnH, el: null,      label: '返回选号' });
 
     Object.assign(M, { W, H, S, safeTop, safeBottom, slotR, gap, totalW, slotY, btnH, btnY, pad, bGap, bw });
     dirty = true;
@@ -92,6 +92,31 @@
     ctx.fillStyle = 'rgba(70,95,130,.8)';
     ctx.font = '12px sans-serif';
     ctx.fillText('拖动旋转视角 · 点击下方按钮开奖', 16, safeTop + 39);
+
+    /* 带注提示条：选号页「带这注去 3D 摇奖」进来时显示，摇满 7 球后改成回看引导 */
+    const mt = GameGlobal.__match;
+    if (mt && mt.pending) {
+      const slotsEl = resultsEl.children;
+      let filledN = 0;
+      for (let i = 0; i < slotsEl.length && i < 7; i++) {
+        if (slotsEl[i] && slotsEl[i].classList && slotsEl[i].classList.contains('filled')) filledN++;
+      }
+      const p = mt.pending, p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+      const label = filledN === 7
+        ? '本期已摇出 · 点「选号」看对照'
+        : '本次带注 ' + p.red.map(p2).join(' ') + ' + ' + p2(p.blue);
+      ctx.font = '12px sans-serif';
+      const tw = ctx.measureText(label).width + 26;
+      roundRect((W - tw) / 2, safeTop + 60, tw, 26, 13);
+      ctx.fillStyle = filledN === 7 ? 'rgba(31,122,61,.9)' : 'rgba(28,68,128,.88)';
+      ctx.fill();
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(label, W / 2, safeTop + 74);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+    }
 
     const slots = resultsEl.children;
     const x0 = (W - M.totalW) / 2;
@@ -134,7 +159,8 @@
       ctx.font = 'bold 14px sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
+      ctx.fillText((b.id === 'start' && mt && mt.pending) ? '摇这一注' : b.label,
+        b.x + b.w / 2, b.y + b.h / 2 + 1);
     }
   }
 
@@ -161,7 +187,7 @@
     for (const b of buttons) {
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         if (b.id === 'picker') {
-          if (GameGlobal.__ui) GameGlobal.__ui.open('picker');
+          if (GameGlobal.__ui) GameGlobal.__ui.open('tool');
         } else if (!b.el.disabled) b.el.click();
         return true;
       }

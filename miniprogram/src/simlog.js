@@ -8,6 +8,11 @@
 
   var list = [], base = null;
   var KEY = 'ssq3d_sim_results_v1';
+  /* 只留最近 MAX_KEEP 期。每条带 8 项形态评估，实测约 724B；不设上限的话
+     storage 单 key 1MB 只够约 1450 条，且每次开奖都要同步重写整包。
+     裁剪放在 render/save 里做，任何写入路径（本地摇奖 / 远程合并 / 载入）都覆盖到。 */
+  var MAX_KEEP = 10;
+  function capList() { if (list.length > MAX_KEEP) list = list.slice(list.length - MAX_KEEP); }
 
   /* ---------- 历史基线 ---------- */
   function bump(o, k) { o[k] = (o[k] || 0) + 1; }
@@ -123,6 +128,7 @@
     return h;
   }
   function render() {
+    capList();                         /* 与 save 同步裁剪，界面条数和存储不会打架 */
     var box = document.getElementById('simList');
     var emp = document.getElementById('simEmpty');
     document.getElementById('simCount').textContent = list.length;
@@ -201,6 +207,7 @@
   }
   function save() {
     try {
+      capList();                       /* 落盘前裁剪：storage 里永远只有最近 10 期 */
       /* 连评估结果一起落盘，选号工具读取后无需重算历史基线 */
       localStorage.setItem(KEY, JSON.stringify(pack()));
     } catch (e) {}
@@ -244,12 +251,14 @@
   }
 
   window.SimLog = {
-    /* 摇完一期直接入列并评估，不再询问 */
-    onDrawComplete: function (red, blue) {
+    /* 摇完一期直接入列并评估，不再询问。
+       pick 可选：带注摇奖时传入，只留在内存（pack 不落盘），供选号页回填对照。 */
+    onDrawComplete: function (red, blue, pick) {
       var r = red.slice().sort(function (a, b) { return a - b; });
       var prev = list.length ? list[list.length - 1].red
         : (window.SSQ_DATA ? window.SSQ_DATA[window.SSQ_DATA.length - 1][1] : null);
       var rec = { red: r, blue: blue, time: Date.now(), ev: evaluate(r, blue, prev) };
+      if (pick && pick.red && pick.red.length === 6) rec.pick = { red: pick.red.slice(), blue: pick.blue };
       list.push(rec);
       render(); save(); remoteSave();
       showNotice(rec, list.length - 1);
