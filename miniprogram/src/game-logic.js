@@ -595,9 +595,25 @@ const AudioFX = (() => {
   };
   if (location.search.indexOf('debug') >= 0) window.__AFX = dbg;
 
-  return {
-    ensure, prime, start, gateOpen, ballOut, ballFall, stir, place, done, reset
-  };
+  /* 导出统一加一层「静音壳」：音频是纯增强，任何一个音频方法抛异常都绝不能冒到
+     摇奖状态机里。真实踩过的坑：updateMachine 里 m.loadOpen 先置 true、接着调
+     AudioFX.gateOpen()，它一抛就把后面「把球切进物理世界」那步跳过了；下一帧
+     !m.loadOpen 已为 false，那个分支再也不会进——表现就是「镜头动了、球一颗都不落」，
+     而且没有任何报错提示。 */
+  const api = { ensure, prime, start, gateOpen, ballOut, ballFall, stir, place, done, reset };
+  for (const k in api) {
+    if (k === 'ensure' || k === 'prime') continue;    /* 这两个自带 try/catch，不能再套 */
+    const fn = api[k];
+    api[k] = function () {
+      if (dead) return;
+      try { return fn.apply(null, arguments); }
+      catch (e) {
+        dead = true; ctx = null; master = null; stirGain = null; stirSrc = null;
+        console.warn('[audio] ' + k + ' 抛异常，已永久静音：' + (e && e.message));
+      }
+    };
+  }
+  return api;
 })();
 
 /* ================= 场景基础 =================
@@ -2130,6 +2146,11 @@ function startShow() {
     state.running = false;
     startBtn.disabled = false; resetBtn.disabled = true;
     say('启动失败：' + ((e && e.message) || e));
+    try {
+      if (typeof wx !== 'undefined' && wx.showToast) {
+        wx.showToast({ title: '启动失败：' + ((e && e.message) || e), icon: 'none', duration: 4000 });
+      }
+    } catch (e2) {}
     console.error('[start]', e);
   }
 }
@@ -2137,6 +2158,16 @@ function beginMachine(m) {
   m.phase = 'loading'; m.timer = 0; m.doneHandled = false;
   m.physicsActive = true; m.restCount = 0;
   setPhase(m.key === 'red' ? '预览架挡板开启 · 号码球落入搅拌室' : '蓝球机：预览架挡板开启 · 落球', true);
+  /* 自检探针：1.6s 后（0.8s 早该放球了）如果一颗球都没进物理层，说明 loading 分支
+     没跑通。小游戏没有 console，把三个关键值直接写到屏幕上，一次定位到底卡在哪。 */
+  setTimeout(function () {
+    if (m.phase !== 'loading') return;
+    var n = 0;
+    for (var i = 0; i < m.balls.length; i++) if (m.balls[i].state === 'in') n++;
+    if (n === 0) {
+      say('球未落 balls=' + m.balls.length + ' open=' + (m.loadOpen ? 1 : 0) + ' t=' + m.timer.toFixed(1));
+    }
+  }, 1600);
 }
 function onBallPlaced(b, m) {
   const totalIdx = m.key === 'red' ? m.doneCount : 6;
@@ -2155,9 +2186,12 @@ function updateMachine(m, dt) {
     if (m.gatePlate) m.gatePlate.position.z = m.gateZ0 - Math.min(1, m.timer / 0.5) * 0.85;
     if (m.timer > 0.8 && !m.loadOpen) {
       m.loadOpen = true;                     /* 挡板已抽开：管内球沿管滑落进球壳 */
+      /* 顺序很关键：先把球切进物理世界，再放音效。
+         反过来的话，音效一旦抛异常就会把下面这行跳过，而 m.loadOpen 已是 true，
+         下一帧不会再进这个分支——球永远卡在管里，画面只剩镜头在动。 */
+      for (const b of m.balls) { b.state = 'in'; b.vsT = 0; b.v.set(0, 0, 0); }
       AudioFX.gateOpen();                     /* 闸门抽开机械声 */
       AudioFX.ballFall(1);                     /* 奖球下落：整批球落入搅拌室 */
-      for (const b of m.balls) { b.state = 'in'; b.vsT = 0; b.v.set(0, 0, 0); }
     }
     /* 球全部脱离预览管并落稳（宽阈值 + 超时兜底，避免死锁） */
     if (m.loadOpen && (m.balls.every(b => !b.tube && b.p.y < m.cy + m.R * 0.45) || m.timer > 8)) {
@@ -2410,7 +2444,24 @@ function animate(now) {
   adaptResolution(dt);          /* 按实时帧率动态调分辨率（移动真机自适应兜底） */
   if (state.running || machines.some(m => m.phase !== 'idle')) {
     for (const m of machines) {
-      if (m.phase !== 'idle') updateMachine(m, dt);
+      if (m.phase === 'idle') continue;
+      /* 单帧异常不能拖死整个渲染循环：以前 updateMachine 一抛，后面的相机补间和
+         renderer.render 全部跳过，画面冻结在出错那一帧，用户看到的就是
+         「镜头动一下、然后球一颗都不落」，而且屏幕上没有任何报错。 */
+      try { updateMachine(m, dt); }
+      catch (e) {
+        if (!window.__mErr) {
+          window.__mErr = (e && (e.message || e)) || 'unknown';
+          console.error('[machine]', e);
+          say('动画异常：' + window.__mErr);
+          /* 小游戏里没有 console 面板，toast 是唯一一定会被看到的通道 */
+          try {
+            if (typeof wx !== 'undefined' && wx.showToast) {
+              wx.showToast({ title: '动画异常：' + window.__mErr, icon: 'none', duration: 4000 });
+            }
+          } catch (e2) {}
+        }
+      }
     }
   }
   /* 搅拌声跟拨盘转速走：两台机取最大，一台转就出声；全停（含重置）自然淡出。
