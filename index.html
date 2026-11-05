@@ -39,17 +39,19 @@
   @keyframes pop { 0% { transform: scale(.2); } 100% { transform: scale(1); } }
   #phase { display: none; position: fixed; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); font-size: 15px; color: #40597a; letter-spacing: 2px; min-height: 22px; text-align: center; z-index: 10; }
   #phase.active { display: block; color: #b8620c; text-shadow: 0 0 12px rgba(255,180,80,.45); }   /* 仅页面报错时显示 */
-  #controls { position: fixed; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: flex; gap: 16px; z-index: 10; }
+  /* 一行三等宽：与小游戏 HUD（hud.js 三等分按钮）同构，任意屏宽都稳定单行 */
+  #controls { position: fixed; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); display: flex; gap: 12px; width: min(520px, calc(100vw - 24px)); z-index: 10; }
+  #controls button { flex: 1; min-width: 0; white-space: nowrap; padding-left: 0; padding-right: 0; }
   button {
     padding: 12px 34px; font-size: 17px; font-weight: 700; letter-spacing: 3px;
-    border-radius: 28px; border: 1px solid rgba(255,255,255,.25);
+    border-radius: 26px; border: 1px solid rgba(255,255,255,.25);
     cursor: pointer; transition: all .2s; color: #fff;
   }
   #startBtn { background: linear-gradient(135deg, #e53935, #b71c1c); box-shadow: 0 4px 24px rgba(229,57,53,.45); }
   #startBtn:hover:not(:disabled) { transform: translateY(-2px); }
   #resetBtn { background: rgba(255,255,255,.6); color: #25354d; border-color: rgba(40,60,90,.2); }
   #pickerBtn { background: rgba(37,53,77,.78); color: #fff; border-color: rgba(255,255,255,.3);
-               padding: 11px 22px; font-size: 15px; letter-spacing: 1px; }
+               padding-top: 11px; padding-bottom: 11px; font-size: 15px; letter-spacing: 1px; }
   #pickerBtn:hover { background: rgba(37,53,77,.94); transform: translateY(-2px); }
 
   /* ---------- 模拟结果：右上角「是否加入」提示 ---------- */
@@ -137,7 +139,7 @@
     #results { margin-top: 6px; }
     .slot { width: 38px; height: 38px; font-size: 18px; }
     #controls { bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
-    button { padding: 8px 20px; font-size: 14px; }
+    button { padding-top: 8px; padding-bottom: 8px; font-size: 14px; }
     #phase { bottom: calc(58px + env(safe-area-inset-bottom, 0px)); }
     #simPanel { top: calc(52px + env(safe-area-inset-top, 0px)); }
   }
@@ -145,9 +147,9 @@
     #results { gap: clamp(4px, 1.6vw, 9px); }
     .slot { width: clamp(32px, 10.5vw, 46px); height: clamp(32px, 10.5vw, 46px);
             font-size: clamp(15px, 5vw, 21px); border-width: 1.5px; }
-    #controls { gap: clamp(6px, 2vw, 12px); width: calc(100vw - 24px); justify-content: center; }
-    button { padding: 10px clamp(12px, 4vw, 22px); font-size: clamp(13px, 3.6vw, 16px); letter-spacing: 1px; }
-    #pickerBtn { padding: 10px clamp(10px, 3vw, 16px); font-size: clamp(12px, 3.2vw, 15px); letter-spacing: 0; }
+    #controls { gap: clamp(6px, 2vw, 10px); width: calc(100vw - 24px); }
+    button { padding-top: 10px; padding-bottom: 10px; font-size: clamp(13px, 3.6vw, 16px); letter-spacing: 1px; }
+    #pickerBtn { padding-top: 10px; padding-bottom: 10px; font-size: clamp(12px, 3.2vw, 15px); letter-spacing: 0; }
     #simPanel { width: min(332px, calc(100vw - 32px)); }
   }
 </style>
@@ -295,24 +297,87 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-/* ================= 音效（Web Audio 程序化合成，无需任何外部音频文件） ================= */
+/* ================= 音效（Web Audio 程序化合成，无需任何外部音频文件） =================
+   三层结构，全部由摇奖物理实时驱动（不是定时循环音轨），所以天然「跟着进度走」：
+     ① 机械层 stir  —— 底盘电机低频嗡鸣，音量与音高跟随搅拌强度 m.agit
+     ② 摩擦层 roll  —— 球在预览管内下滑、在滑道里滚动的沙沙声，亮度随速度升高
+     ③ 撞击层 clack —— 球撞球 / 撞玻璃 / 撞拨块的颗粒声，密度 = 每秒真实撞击次数，
+                       响度 = 平均撞击能量（安静下来的球堆自然就没有声音）
+   另有一次性的节点音：开奖提示、闸门、出管下落、落地、开阀、入位、完成。
+   颗粒音用预渲染采样（首次激活时算一次），每次播放只新建 BufferSource + Gain，
+   移动端 CPU 开销可控；每秒颗粒数有硬上限，防止球堆紧张时音频节点爆量。 */
 const AudioFX = (() => {
+  const VOL = 0.7;
   let ctx = null, master = null, muted = false;
-  let stirOsc = null, stirGain = null, stirFilter = null;   /* 搅拌持续音（机器嗡鸣）节点 */
-  let stirReady = false;
+  let noiseBuf = null;                       /* 共用噪声采样：摩擦循环 + 气流一次性声 */
+  let grainBufs = [];                        /* 预渲染的撞击颗粒（4 个音高变体） */
+  let stirOsc = null, stirGain = null, stirFilter = null, stirReady = false;   /* ① 机械层 */
+  let rollSrc = null, rollFilter = null, rollGain = null, rollReady = false;   /* ② 摩擦层 */
+  let clackAcc = 0, clackT = 0;              /* ③ 撞击层：节奏累加器 */
+  let lastThud = 0, lastFall = 0, lastClunk = 0;
+  const CLACK_MAX = 26;                      /* 每秒颗粒上限（移动端保底） */
+
+  const clamp01 = v => (v > 1 ? 1 : (v > 0 ? v : 0));
+
   function ensure() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = muted ? 0 : 0.7;
+      master.gain.value = muted ? 0 : VOL;
       master.connect(ctx.destination);
+      buildBuffers();
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume();
     return ctx;
   }
   function now() { return ctx ? ctx.currentTime : 0; }
+
+  /* 采样只在首次激活时算一次：噪声底 + 4 个「有机玻璃球对撞」颗粒 */
+  function buildBuffers() {
+    const sr = ctx.sampleRate || 44100;
+    const nb = ctx.createBuffer(1, Math.floor(sr * 1.5), sr);
+    const nd = nb.getChannelData(0);
+    for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1) * 0.5;
+    noiseBuf = nb;
+    /* 颗粒 = 极快起振的噪声瞬态 + 两个非谐波共振（玻璃/塑料球对撞的「嗒」，带一点音高）
+       变体之间只有基频不同（1500 / 2010 / 2693 / 3609 Hz），播放时再随机变速加抖动 */
+    for (let k = 0; k < 4; k++) {
+      const dur = 0.085, n = Math.floor(sr * dur);
+      const buf = ctx.createBuffer(1, n, sr);
+      const d = buf.getChannelData(0);
+      const f0 = 1500 * Math.pow(1.34, k);
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const env = Math.exp(-t * 62) * (1 - Math.exp(-t * 1200));
+        const ping = Math.sin(2 * Math.PI * f0 * t) * 0.62 + Math.sin(2 * Math.PI * f0 * 2.71 * t) * 0.2;
+        d[i] = ((Math.random() * 2 - 1) * 0.5 + ping) * env;
+      }
+      grainBufs.push(buf);
+    }
+  }
+
+  /* 单颗撞击颗粒：pitch 变速（越低越像大球/闷撞），pan 可选声像（球在左右哪一侧），when 延迟秒 */
+  function grain(vol, pitch, pan, when) {
+    if (!ctx || muted || vol <= 0.001 || !grainBufs.length) return;
+    const t = now() + (when || 0);
+    const src = ctx.createBufferSource();
+    src.buffer = grainBufs[(Math.random() * grainBufs.length) | 0];
+    src.playbackRate.value = Math.max(0.3, Math.min(3, (pitch || 1) * (0.88 + Math.random() * 0.45)));
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    if (pan !== undefined && ctx.createStereoPanner) {
+      const p = ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      g.connect(p).connect(master);
+    } else {
+      g.connect(master);
+    }
+    src.start(t + Math.random() * 0.01);   /* 微抖动：同帧多颗粒不完全重叠，避免听成一支「机关枪」 */
+    src.stop(t + 0.25);
+  }
 
   /* 单次音调：支持起始/终止频率（扫频）、波形、音量包络 */
   function tone({ freq = 440, freqEnd = null, type = 'sine', dur = 0.18, vol = 0.5, attack = 0.005, when = 0 }) {
@@ -341,6 +406,46 @@ const AudioFX = (() => {
   function ballOut() {                            /* 出球滑落：短促下行「咻」 */
     tone({ freq: 900, freqEnd: 320, type: 'sine', dur: 0.18, vol: 0.22 });
   }
+  /* 奖球下落：球滑出预览管口 / 从上层落入搅拌室的气流声
+     = 带通快速下扫的噪声（气流）+ 一层低频主体，落地那一下由 thud() 补 */
+  function ballFall(power) {
+    if (!ensure()) return;
+    const t = now();
+    if (t - lastFall < 0.055) return;             /* 7 颗球几乎同时掉：合并成一次，避免糊成一片 */
+    lastFall = t;
+    const p = clamp01(power === undefined ? 0.7 : power) * 0.6 + 0.4;
+    const src = ctx.createBufferSource(); src.buffer = noiseBuf;
+    const f = ctx.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.1;
+    f.frequency.setValueAtTime(1700, t);
+    f.frequency.exponentialRampToValueAtTime(430, t + 0.16);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15 * p, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    src.connect(f).connect(g).connect(master);
+    src.start(t); src.stop(t + 0.2);
+    tone({ freq: 480, freqEnd: 150, type: 'sine', dur: 0.15, vol: 0.10 * p, when: 0.01 });
+  }
+  /* 奖球落地 / 撞玻璃的厚击：低频砰 + 一颗低音高颗粒（越重越闷越大） */
+  function thud(power) {
+    if (!ensure()) return;
+    const t = now();
+    if (t - lastThud < 0.038) return;             /* 球堆连击时限流，否则变成噪声墙 */
+    lastThud = t;
+    const p = clamp01(power === undefined ? 0.6 : power) * 0.75 + 0.25;
+    grain(0.17 * p, 0.55 + (1 - p) * 0.25);
+    tone({ freq: 128 + p * 46, freqEnd: 62, type: 'sine', dur: 0.13, vol: 0.15 * p });
+  }
+  /* 出球口档杆抽开：金属「咔哒」（两声，第二声是挡杆到位） */
+  function valveClunk() {
+    if (!ensure()) return;
+    const t = now();
+    if (t - lastClunk < 0.12) return;
+    lastClunk = t;
+    grain(0.20, 0.42);
+    tone({ freq: 210, freqEnd: 120, type: 'square', dur: 0.05, vol: 0.05 });
+    grain(0.13, 0.36, undefined, 0.07);   /* 挡杆到位第二声 */
+  }
   function place() {                              /* 球落位：清脆「叮」（双泛音） */
     tone({ freq: 1046.5, type: 'triangle', dur: 0.14, vol: 0.30 });
     tone({ freq: 2093.0, type: 'sine', dur: 0.10, vol: 0.13 });
@@ -353,43 +458,92 @@ const AudioFX = (() => {
     tone({ freq: 440, freqEnd: 220, type: 'sine', dur: 0.16, vol: 0.18 });
   }
 
-  /* 搅拌持续音：低频锯齿嗡鸣 + 噪声摩擦层，gain 跟随搅拌强度(0~1)。
-     这是最初那版「机器运转嗡嗡嗡」，结构简单、听感稳，不再做颗粒合成。 */
+  /* ① 机械层：底盘电机低频锯齿嗡鸣（音量/音高由 update() 每帧跟随搅拌强度） */
   function startStir() {
     if (!ensure() || stirReady) return;
     stirGain = ctx.createGain(); stirGain.gain.value = 0.0001;
     stirFilter = ctx.createBiquadFilter(); stirFilter.type = 'lowpass'; stirFilter.frequency.value = 320;
     stirGain.connect(master);
-    stirOsc = ctx.createOscillator(); stirOsc.type = 'sawtooth'; stirOsc.frequency.value = 70;
+    stirOsc = ctx.createOscillator(); stirOsc.type = 'sawtooth'; stirOsc.frequency.value = 60;
     const og = ctx.createGain(); og.gain.value = 0.5;
     stirOsc.connect(og).connect(stirFilter);
-    /* 噪声摩擦层：让嗡鸣带一点「球在滚」的沙沙质感 */
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 1.5), ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.5;
-    const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
-    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 220; nf.Q.value = 0.7;
-    const ng = ctx.createGain(); ng.gain.value = 0.22;
-    noise.connect(nf).connect(ng).connect(stirFilter);
     stirFilter.connect(stirGain);
-    stirOsc.start(); noise.start();
+    stirOsc.start();
     stirReady = true;
   }
-  function setStir(level) {
-    if (!stirReady || !ctx) return;
-    const lv = Math.max(0, Math.min(1, level || 0));
-    stirGain.gain.setTargetAtTime(muted ? 0 : lv * 0.5, ctx.currentTime, 0.08);
-    if (stirOsc) stirOsc.frequency.setTargetAtTime(60 + lv * 42, ctx.currentTime, 0.1);
+
+  /* ② 摩擦层：噪声循环过一个带通，球在管内下滑 / 在滑道里滚时电平与亮度跟着速度走。
+     常驻一条（不反复建节点），无声时 gain 归零，开销恒定 */
+  function startRoll() {
+    if (!ensure() || rollReady) return;
+    rollGain = ctx.createGain(); rollGain.gain.value = 0.0001;
+    rollFilter = ctx.createBiquadFilter(); rollFilter.type = 'bandpass';
+    rollFilter.frequency.value = 500; rollFilter.Q.value = 0.9;
+    rollSrc = ctx.createBufferSource(); rollSrc.buffer = noiseBuf; rollSrc.loop = true;
+    rollSrc.connect(rollFilter).connect(rollGain).connect(master);
+    rollSrc.start();
+    rollReady = true;
   }
-  function stopStir() { setStir(0); }
+
+  /* 每帧调用一次：把物理层记的账翻译成声音。
+     o = { agit 搅拌强度(0~1), hits 每秒有效撞击数, energy 平均撞击强度,
+           tube 管内下滑速度之和, rail 滑道滚动速度之和 } */
+  function update(o) {
+    if (!ctx) return;                 /* 未被用户手势激活前不建 AudioContext */
+    if (!stirReady) startStir();
+    if (!rollReady) startRoll();
+    const t = now();
+    const dt = clackT ? Math.min(0.12, t - clackT) : 0.016;
+    clackT = t;
+
+    const agit = clamp01(o.agit || 0);
+    /* 机械层 */
+    stirGain.gain.setTargetAtTime(muted ? 0 : agit * 0.26, t, 0.09);
+    if (stirOsc) stirOsc.frequency.setTargetAtTime(56 + agit * 42, t, 0.12);
+
+    /* 摩擦层：预览管下滑（闷、暗）/ 滑道滚动（亮、硬），取较强者驱动同一层 */
+    const tubeLv = clamp01((o.tube || 0) / 2.4);
+    const railLv = clamp01((o.rail || 0) / 1.6);
+    const rollLv = Math.max(tubeLv, railLv * 0.9);
+    rollGain.gain.setTargetAtTime(muted ? 0 : rollLv * 0.10, t, 0.05);
+    rollFilter.frequency.setTargetAtTime(
+      railLv > tubeLv ? 900 + railLv * 900 : 380 + tubeLv * 520, t, 0.06);
+
+    /* 撞击层：密度 = 真实碰撞频率 × 搅拌强度权重，响度 = 平均撞击能量 */
+    const rate = Math.min(CLACK_MAX, (o.hits || 0) * (0.5 + agit * 0.5));
+    const vol = 0.055 + 0.125 * clamp01((o.energy || 0) / 1.6);
+    if (rate > 0.5) {
+      clackAcc += rate * dt;
+      let budget = 4;                        /* 单帧上限：卡顿后不许一次性倾泻 */
+      while (clackAcc >= 1 && budget-- > 0) {
+        clackAcc -= 1;
+        grain(vol * (0.75 + Math.random() * 0.5), 1);
+      }
+    } else if (clackAcc > 0.9) {
+      clackAcc = 0.9;                        /* 撞击稀疏时就别攒着 */
+    }
+    if (clackAcc > 4) clackAcc = 0;
+  }
+
+  /* 静音 / 复位：所有持续层淡到 0（一次性音已排好队，自然播完） */
+  function silence() {
+    if (!ctx) return;
+    const t = now();
+    if (stirReady) stirGain.gain.setTargetAtTime(0, t, 0.06);
+    if (rollReady) rollGain.gain.setTargetAtTime(0, t, 0.06);
+    clackAcc = 0; clackT = t;
+  }
 
   function mute(on) {
     muted = on;
-    if (master && ctx) master.gain.setTargetAtTime(on ? 0 : 0.7, ctx.currentTime, 0.02);
+    if (master && ctx) master.gain.setTargetAtTime(on ? 0 : VOL, ctx.currentTime, 0.02);
   }
   function isMuted() { return muted; }
 
-  return { ensure, start, gateOpen, ballOut, place, done, reset, startStir, setStir, stopStir, mute, isMuted };
+  return {
+    ensure, start, gateOpen, ballOut, ballFall, thud, valveClunk, place, done, reset,
+    startStir, startRoll, update, silence, mute, isMuted
+  };
 })();
 
 /* ================= 场景基础 =================
@@ -768,6 +922,18 @@ const G = 22;
 const REST_BALL = 0.55;
 const REST_WALL = 0.62;
 const DT = 1 / 120;
+
+/* ================= 音效取样口（物理 → 音频的唯一通道） =================
+   物理层只负责「记账」：这一帧发生了几次有效撞击、球在多快地下滑/滚动。
+   主循环每帧把账本交给 AudioFX.update() 后清零。声音的节奏与力度都来自真实物理，
+   不是循环音轨，所以摇奖走到哪一步（落球→搅拌→出球），声音自然就变到哪一步。
+   hits 只统计超过阈值的碰撞：球堆里贴着的静态接触如果也算，会变成一片白噪声。 */
+const SfxFeed = { hits: 0, energy: 0, tube: 0, rail: 0 };
+function sfxHit(e) {
+  if (e < 0.35) return;
+  SfxFeed.hits++;
+  SfxFeed.energy += Math.min(3, e);
+}
 
 const machines = [];
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xb9c3e2, metalness: 1, roughness: 0.2, envMapIntensity: 1.3 });
@@ -1380,7 +1546,11 @@ function stepInBall(b, m, dt) {
     b.vsT += -G * b.tube.dir.y * dt;
     b.vsT *= (1 - 0.25 * dt);
     b.sT += b.vsT * dt;
-    if (b.sT <= R_BALL + 0.08) b.tube = null;      /* 滑出管底口 */
+    SfxFeed.tube += Math.abs(b.vsT);               /* 管内下滑速度 → 摩擦层 */
+    if (b.sT <= R_BALL + 0.08) {                   /* 滑出管底口 */
+      b.tube = null;
+      AudioFX.ballFall(Math.min(1, Math.abs(b.vsT) / 1.5));   /* 奖球下落：出管气流声 */
+    }
     else {
       b.p.copy(b.tube.base).addScaledVector(b.tube.dir, b.sT);
       v.copy(b.tube.dir).multiplyScalar(b.vsT);
@@ -1431,7 +1601,8 @@ function stepInBall(b, m, dt) {
       p.x = m.cx + (p.x - m.cx) * k;
       p.z = m.cz + (p.z - m.cz) * k;
     }
-    if (v.y < -2.2) v.y *= -0.25; else v.y = 0;
+    if (v.y < -2.2) { AudioFX.thud(Math.min(1, -v.y / 4)); v.y *= -0.25; }   /* 落地：奖球撞击声 */
+    else v.y = 0;
   }
 
   /* 落球收拢：管束跨在开口上，球直落；仅对落到开口边缘外侧的球施加向心力 */
@@ -1471,6 +1642,7 @@ function stepInBall(b, m, dt) {
       if (vn > 0) {
         v.addScaledVector(_n, -(1 + REST_WALL) * vn);
         v.multiplyScalar(0.985);
+        sfxHit(vn * 0.9);                 /* 撞玻璃壳：计入撞击层（越重越响） */
       }
     }
   }
@@ -1619,6 +1791,7 @@ function stepRailBall(b, m, dt) {
   b.v.y -= G * dt;
   b.p.addScaledVector(b.v, dt);
   railWallCollide(b, m, dt);
+  if (!b.placed) SfxFeed.rail += b.v.length();     /* 滑道里滚动速度 → 摩擦层（球在槽里滚的沙沙声） */
   /* 兜底防丢球：滑道球若意外跌出管膛（双层端板之外的最后防线），重新放回下轨右段空白区
      （避开取球位队列，球自然滚向队尾入位） */
   if (b.p.y < LOWER_PTS[0][1] - 0.45 || (!b.placed && b.railT > 12)) {
@@ -1681,6 +1854,7 @@ function collideGroup(arr) {
           const imp = -(1 + REST_BALL) * rv * 0.5;
           a.v.addScaledVector(_n, -imp);
           b.v.addScaledVector(_n, imp);
+          sfxHit(-rv);                    /* 球撞球：撞击层的颗粒来源 */
         }
       }
     }
@@ -1698,7 +1872,8 @@ function startShow() {
   state.drawRed = []; state.drawBlue = null;
   state.currentIdx = 0;
   startBtn.disabled = true; resetBtn.disabled = true;
-  AudioFX.ensure(); AudioFX.start(); AudioFX.startStir();   /* 开奖提示音 + 启动搅拌持续音 */
+  AudioFX.ensure(); AudioFX.start();   /* 开奖提示音（同时解锁 AudioContext） */
+  AudioFX.startStir(); AudioFX.startRoll();   /* 机械层嗡鸣 + 摩擦层常驻，音量由物理驱动 */
   focusCamera('red');                 /* 镜头先推到左侧(红)机器 */
   beginMachine(machines[0]);
 }
@@ -1736,6 +1911,7 @@ function updateMachine(m, dt) {
   } else if (m.phase === 'stir') {
     if (m.timer > 3) {
       m.phase = 'draw'; m.timer = 0; m.stallT = 0; m.holeOpen = true;
+      AudioFX.valveClunk();                  /* 出球口档杆抽开：金属「咔哒」 */
       setPhase('出球口档杆开启 · 等待出球', true);
     }
   } else if (m.phase === 'draw') {
@@ -1848,7 +2024,7 @@ function updateMachine(m, dt) {
               if (vn < 0) { b.v.x -= vn * nx * 1.05; b.v.z -= vn * nz * 1.05; }
               b.v.x += (svx - b.v.x) * 0.45; b.v.z += (svz - b.v.z) * 0.45;
               /* 撞击点在球心下方：正面撞击把球向前上方挑起，产生真实翻滚 */
-              if (vn < -0.5) b.v.y += Math.min(-vn, 2.0) * 0.15;
+              if (vn < -0.5) { b.v.y += Math.min(-vn, 2.0) * 0.15; sfxHit(-vn * 1.1); }
             }
           }
         }
@@ -1961,7 +2137,8 @@ function resetAll() {
   state.running = false;
   startBtn.disabled = false; resetBtn.disabled = true;
   setPhase('点击「开始摇奖」', false);
-  AudioFX.stopStir(); AudioFX.reset();  /* 停搅拌嗡鸣 + 复位音 */
+  AudioFX.silence();                   /* 停搅拌嗡鸣 + 摩擦层 + 撞击颗粒 */
+  AudioFX.reset();                     /* 复位提示音 */
   focusCamera('overview');            /* 重置时镜头也回到全景 */
 }
 resetBtn.disabled = true;
@@ -1979,10 +2156,18 @@ function animate(now) {
       if (m.phase !== 'idle') updateMachine(m, dt);
     }
     let mg = 0; for (const m of machines) mg = Math.max(mg, m.agit);
-    AudioFX.setStir(mg);            /* 搅拌持续音音量跟随搅拌强度 */
+    /* 声音跟进度：搅拌强度 + 本帧真实撞击密度/能量 + 管内下滑与滑道滚动速度 */
+    AudioFX.update({
+      agit: mg,
+      hits: SfxFeed.hits / Math.max(0.008, dt),
+      energy: SfxFeed.hits ? SfxFeed.energy / SfxFeed.hits : 0,
+      tube: SfxFeed.tube,
+      rail: SfxFeed.rail
+    });
   } else {
-    AudioFX.setStir(0);
+    AudioFX.update({ agit: 0, hits: 0, energy: 0, tube: 0, rail: 0 });
   }
+  SfxFeed.hits = 0; SfxFeed.energy = 0; SfxFeed.tube = 0; SfxFeed.rail = 0;
   if (camTween.active) updateCamTween(dt); else controls.update();
   renderer.render(scene, camera);
 }
