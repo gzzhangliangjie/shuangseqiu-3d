@@ -2,7 +2,7 @@
   "appid": "touristappid",
   "compileType": "game",
   "projectname": "shuangseqiu-3d-sim",
-  "description": "双色球 3D 摇奖机（微信小游戏自用版，不发布）",
+  "description": "双色球 3D 摇奖机（微信小游戏 · 自用体验版）",
   "setting": {
     "es6": false,
     "urlCheck": false,

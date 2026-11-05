@@ -4,101 +4,578 @@ const THREE = require('../libs/three.js');
 const { OrbitControls } = require('../libs/OrbitControls.js');
 const { RoomEnvironment } = require('../libs/RoomEnvironment.js');
 
-/* ================= 音效（Web Audio 程序化合成，无需任何外部音频文件） ================= */
+/* ================= 音效（离线程序化合成，无外部音频文件） =================
+   全部在首次点击时算成采样，运行时只播 Buffer，热路径里没有任何音频节点创建。
+     搅拌（4s 无缝循环）—— 拨盘推着球在玻璃腔里翻滚，整局唯一持续的声音
+     下落（1.1s）—— 闸门抽开，整批球倒进搅拌室
+     另有开局 / 开阀 / 出球 / 落位 / 完成 / 复位六个一次性事件声。
+
+   搅拌底噪为什么要这么写：
+     上一版是 2.4s 循环、颗粒成簇，RMS 每 2.4s 起伏一次——听感成了「隔一会儿哐一声」，
+     与真正的搅拌无关。真实搅拌是**稳态**的：单颗球响，但一屋子球同时翻，
+     总响度几乎不变。所以这一版颗粒均匀铺满 4s 不成簇，再用 50ms 窗把 RMS 包络
+     压平到中位数，尾部环形折返保证循环点连续。判断标准只有一个：
+     不看一眼波形，听不出它在循环。
+
+   为什么不听「电子音」：
+     正弦 / 三角 / 锯齿波是电子音的定义。真实硬物撞击 = 极短的宽带噪声起振
+     + 几个**非谐波**衰减模态（比值 1 : 2.76 : 5.4 : 8.93，整数比会立刻变乐音）。
+     本文件所有一次性音都用噪声激励，没有振荡器。
+     一个例外是出球的「嘟」：高 Q 带通把噪声滤成带音高的窄带、频率轻微下滑——
+     「嘟」必须有音高，但激励仍是噪声，所以不是合成器那种干硬的正弦。
+     再加 4 个稀疏延时抽头做早期反射：干声贴耳是另一种「假」，
+     真实录音永远带着房间，这一层是空间感的来源。
+
+   性能（面向微信小游戏 wx.createWebAudioContext）：
+     常驻节点 3 个（master + 搅拌的 1 源 + 1 增益），搅拌源一直挂着、只用增益门控，
+     摇奖过程中不创建任何节点；事件声每次 1 源 + 1 增益，播完自动回收。
+     全部采样 22.05kHz 单声道约 0.69MB，首次点击时算一次；主循环里只有一次音量赋值。 */
 const AudioFX = (() => {
+  const VOL = 0.07;                          /* 总音量：只做背景提示，不抢戏 */
+  const STIR_LV = 1.05;                      /* 搅拌底噪上限：让出球「嘟」跳得出来 */
+  const SR = 22050;                          /* 22.05k：比 44.1k 省一半内存，音效足够 */
+  const TAU = 6.2832;
   let ctx = null, master = null, muted = false;
-  let stirOsc = null, stirGain = null, stirFilter = null;   /* 搅拌持续音（机器嗡鸣）节点 */
-  let stirReady = false;
+  let fallBuf = null, stirBuf = null;
+  let stirSrc = null, stirGain = null, stirLv = 0;
+  let rawSet = null;                          /* 已合成的原始数据（不含 AudioBuffer） */
+  let hitBuf = null, clunkBuf = null, slideBuf = null;
+  let outBuf = null, chimeBuf = null, tickBuf = null;
+  let tFall = -1;                             /* -1：保证第一次调用不被节流挡掉 */
+
+  const clamp01 = v => (v > 1 ? 1 : (v > 0 ? v : 0));
+
   function ensure() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = muted ? 0 : 0.7;
+      master.gain.value = muted ? 0 : VOL;
       master.connect(ctx.destination);
+      /* 优先 22050；个别实现不接受自定义采样率，就退回设备原生率 */
+      const _t0 = performance.now();
+      if (!rawSet) {
+        try { buildSamples(SR); }
+        catch (e) { rawSet = null; buildSamples(ctx.sampleRate || 44100); }
+      }
+      const _t1 = performance.now();
+      try { uploadSamples(); }
+      catch (e) {
+        /* createBuffer 不接受 22.05k：按设备采样率重算再传一次 */
+        buildSamples(ctx.sampleRate || 44100);
+        uploadSamples();
+      }
+      if (location.search.indexOf('debug') >= 0)
+        window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(performance.now() - _t1).toFixed(1),
+                       primed: _t1 - _t0 < 1 };
+      startStirLoop();
     }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended' && ctx.resume) {
+      /* 无用户手势时 resume 会被拒绝，这里必然失败一次，吞掉即可；
+         真正的恢复发生在点击后的 playBuf → ensure() 里。 */
+      const pr = ctx.resume();
+      if (pr && pr.catch) pr.catch(() => {});
+    }
     return ctx;
   }
   function now() { return ctx ? ctx.currentTime : 0; }
 
-  /* 单次音调：支持起始/终止频率（扫频）、波形、音量包络 */
-  function tone({ freq = 440, freqEnd = null, type = 'sine', dur = 0.18, vol = 0.5, attack = 0.005, when = 0 }) {
-    if (!ensure()) return;
-    const t0 = now() + when;
-    const osc = ctx.createOscillator();
+  /* ================= 合成核心 =================
+     bd 是目标缓冲，bn 是其长度；wrap=true 时写超尾部回卷到开头（循环用），
+     false 时直接截断（一次性采样用）。 */
+
+  /* 宽带敲击脉冲：带通噪声 + 衰减包络。硬物相撞的主体就是它（10~30ms），
+     也是「真实」的来源。cf 是撞击的中心频率，q 越小越像「啪」，越大越像「嗒」。 */
+  function clickInto(bd, bn, sr, t0, cf, q, decay, dur, amp, wrap) {
+    const start = Math.floor(t0 * sr);
+    const len = Math.min(Math.floor(dur * sr), bn);
+    const w0 = TAU * cf / sr;
+    const al = Math.sin(w0) / (2 * q), a0 = 1 + al;
+    const c0 = al / a0, c2 = -al / a0;
+    const c1 = -2 * Math.cos(w0) / a0, c3 = (1 - al) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      const x = Math.random() * 2 - 1;
+      const y = c0 * x + c2 * x2 - c1 * y1 - c3 * y2;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      const env = Math.exp(-t * decay) * (1 - Math.exp(-t * 3000));
+      const j = start + i;
+      if (wrap) bd[j % bn] += y * env * amp;
+      else if (j < bn) bd[j] += y * env * amp;
+    }
+  }
+
+  /* 非谐波模态：物体被敲之后自己的余振。
+     比值 1 : 2.76 : 5.4 : 8.93 是球壳/棒体的弯曲模态——整数比（1:2:3）会被
+     听成乐音，那是电子琴；jit 给每个模态 ±1.5% 抖动，真实物体不会严丝合缝。
+     关键：真实硬物撞击的余振极短（十几毫秒），decay 给小了就会变成「哔」。 */
+  function modesInto(bd, bn, sr, t0, f0, decay, dur, amp, jit, wrap, beat) {
+    const R = [1, 2.76, 5.4, 8.93], A = [1, 0.52, 0.28, 0.13];
+    const start = Math.floor(t0 * sr);
+    const len = Math.min(Math.floor(dur * sr), bn);
+    const ph = [0, 0, 0, 0], dph = [0, 0, 0, 0];
+    for (let k = 0; k < 4; k++) {
+      ph[k] = Math.random() * TAU;
+      dph[k] = TAU * f0 * R[k] * (1 + (Math.random() - 0.5) * (jit || 0.015)) / sr;
+    }
+    /* beat>0 时再加一组频率偏高 0.4% 的模态：两者干涉产生 2~3Hz 的起伏，
+       真实钟/铃就是这样「闪」的，纯正弦没有这个。 */
+    const bph = beat ? ph.slice(0) : null;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      let v = 0;
+      for (let k = 0; k < 4; k++) {
+        ph[k] += dph[k];
+        v += Math.sin(ph[k]) * A[k] * Math.exp(-t * decay * (1 + k * 0.9));
+      }
+      if (beat) {
+        for (let k = 0; k < 4; k++) {
+          bph[k] += dph[k] * (1 + beat);
+          v += Math.sin(bph[k]) * A[k] * 0.55 * Math.exp(-t * decay * 1.15 * (1 + k * 0.9));
+        }
+      }
+      const j = start + i;
+      if (wrap) bd[j % bn] += v * amp;
+      else if (j < bn) bd[j] += v * amp;
+    }
+  }
+
+  /* 重量（球体本身的质量感）：低通噪声的短促包络。没有音高，所以不会变成「嗡」。 */
+  function thumpInto(bd, bn, sr, t0, cut, decay, dur, amp) {
+    const start = Math.floor(t0 * sr);
+    const len = Math.min(Math.floor(dur * sr), bn);
+    const g = Math.sqrt((2 - cut) / cut);        /* 一阶低通对白噪声的增益补偿 */
+    let l = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      l += (Math.random() * 2 - 1 - l) * cut;
+      const j = start + i;
+      if (j < bn) bd[j] += l * g * Math.exp(-t * decay) * (1 - Math.exp(-t * 1500)) * amp;
+    }
+  }
+
+  /* 单颗「球撞球」颗粒：带通噪声（二阶 biquad，硬壳短促敲击，无音高感）
+     + 一级低通的重低频（给撞击一点重量，不是正弦所以没有音高）。
+     颗粒尾巴取模写回开头，循环无缝。 */
+  function grainInto(bd, bn, sr, start, f0, q, decay, amp) {
+    const len = Math.min(bn, Math.max(8, Math.floor(sr * (4.2 / decay))));
+    const w0 = TAU * f0 / sr;
+    const al = Math.sin(w0) / (2 * q);
+    const a0 = 1 + al;
+    const c0 = al / a0, c2 = -al / a0;
+    const c1 = -2 * Math.cos(w0) / a0, c3 = (1 - al) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0, wt = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      const x = Math.random() * 2 - 1;
+      const y = c0 * x + c2 * x2 - c1 * y1 - c3 * y2;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      wt += (y - wt) * 0.055;                    /* 250Hz 低通：撞击的重量感 */
+      const env = Math.exp(-t * decay) * (1 - Math.exp(-t * 700));
+      bd[(start + i) % bn] += (y * 2.35 + wt * 2.4) * env * amp;
+    }
+  }
+
+  /* 「嘟」：一段带音高的短下滑音。白噪声过高 Q 带通被滤成窄带——
+     有音高但不发干（纯正弦才发干），频率从 f0 滑到 f1：
+     下滑是「嘟」的音节感，定频只会听成「哔」。 */
+  function sweepInto(bd, bn, sr, t0, f0, f1, q, decay, dur, amp) {
+    const start = Math.floor(t0 * sr);
+    const len = Math.min(Math.floor(dur * sr), bn);
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (let i = 0; i < len; i++) {
+      const f = f0 + (f1 - f0) * (i / len);
+      const w0 = TAU * f / sr;
+      const al = Math.sin(w0) / (2 * q), a0 = 1 + al;
+      const c0 = al / a0, c2 = -al / a0;
+      const c1 = -2 * Math.cos(w0) / a0, c3 = (1 - al) / a0;
+      const x = Math.random() * 2 - 1;
+      const y = c0 * x + c2 * x2 - c1 * y1 - c3 * y2;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      const t = i / sr;
+      const env = Math.exp(-t * decay) * (1 - Math.exp(-t * 900));
+      const j = start + i;
+      if (j < bn) bd[j] += y * 2.6 * env * amp;   /* 高 Q 带通的插损补偿 */
+    }
+  }
+
+  /* 房间感：4 个稀疏延时抽头（11/17/23/31ms），越晚越暗，混一点进干声。
+     没有这一层，声音会「贴在耳朵上」，那是另一种电子味。 */
+  function roomInto(d, sr, wet, wrap) {
+    const src = d.slice(0);
+    const taps = [[0.011, 0.55, 0.30], [0.017, 0.38, 0.22], [0.023, 0.26, 0.16], [0.031, 0.17, 0.11]];
+    for (let k = 0; k < taps.length; k++) {
+      const off = Math.floor(taps[k][0] * sr), c = taps[k][2];
+      const gain = taps[k][1] * wet;
+      let l = 0;
+      for (let i = 0; i < src.length; i++) {
+        const j = i - off;
+        const s = j >= 0 ? src[j] : (wrap ? src[src.length + j] : 0);
+        l += (s - l) * c;
+        d[i] += l * gain;
+      }
+    }
+  }
+
+  /* 归一 + 尾部淡出（避免最后一下截断成「咔」） */
+  function finish(d, sr, target, fadeMs) {
+    let pk = 0;
+    for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > pk) pk = a; }
+    if (pk > 0) { const g = target / pk; for (let i = 0; i < d.length; i++) d[i] *= g; }
+    const fx = Math.min(d.length, Math.floor(sr * fadeMs / 1000));
+    for (let i = 0; i < fx; i++) d[d.length - fx + i] *= 1 - i / fx;
+  }
+
+  function buildSamples(sr) {
+    /* 只算数据，不碰 AudioContext —— 合成本身不依赖 ctx，所以可以在页面空闲时
+       先算好（此时还没有用户手势，不能建 ctx，但算数不需要）。
+       首次点击原本要同步跑完这 157ms，用户会看到明显一顿；现在只剩 createBuffer + 拷贝。 */
+    const mk = dur => {
+      const len = Math.max(1, Math.floor(sr * dur));
+      const d = new Float32Array(len);
+      return { length: len, duration: len / sr, sampleRate: sr, getChannelData: () => d };
+    };
+    let d, n;
+
+    /* ---------- ② 下落：一整批球从预览管倒进搅拌室 ---------- */
+    fallBuf = mk(1.1);
+    d = fallBuf.getChannelData(0); n = d.length;
+    {
+      let hp = 0, lp = 0, hf = 0, rk = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const nz = Math.random() * 2 - 1;
+        hp += (nz - hp) * 0.35;
+        lp += (hp - lp) * 0.10;
+        /* 球流的气流：压到很低——一层持续的「呼」是最容易露馅的合成味，
+           真实倒球听到的主要是一颗颗撞击，不是风声 */
+        d[i] = (hp - lp) * Math.min(1, t / 0.02) * Math.exp(-t * 2.2) * 0.34;
+        hf += (nz - hf) * 0.42;
+        rk += (nz - hf - rk) * 0.85;
+        d[i] += rk * Math.min(1, t / 0.05) * Math.exp(-t * 2.6) * 0.12;
+      }
+      /* 55 颗落球：0.015~0.76s，pow 1.6 让间隔前密后疏——像球一颗颗落到底再零星弹两下 */
+      for (let k = 0; k < 55; k++) {
+        const u = k / 54;
+        const t0 = 0.015 + 0.74 * Math.pow(u, 1.6) + Math.random() * 0.02;
+        const amp = (0.50 - 0.26 * u) * (0.6 + Math.random() * 0.8);
+        const wide = Math.random() < 0.25 ? 1150 + Math.random() * 800 : 330 + Math.random() * 780;
+        grainInto(d, n, sr, Math.floor(t0 * sr),
+                  wide, 2.8 + Math.random() * 2.2,
+                  24 + Math.random() * 20, amp);
+      }
+      /* 落地：球砸在底面，两声一重一轻。低通噪声「咚」——不带音高就不会滑成怪声 */
+      for (let k = 0; k < 2; k++) {
+        thumpInto(d, n, sr, k ? 0.33 : 0.19, k ? 0.07 : 0.09,
+                  60, 0.09, k ? 0.30 : 0.55);
+      }
+      roomInto(d, sr, 0.10, false);
+      /* 整体高通 110Hz：Ø50mm 硬球撞玻璃没有这么低的能量，留着只会变成「轰」 */
+      let hpz = 0;
+      for (let i = 0; i < n; i++) {
+        hpz += (d[i] - hpz) * 0.031;
+        d[i] -= hpz;
+      }
+      /* 软饱和：把最响那一下压一点，整片「哗啦」就抬起来，响度不被单个瞬态占满 */
+      for (let i = 0; i < n; i++) d[i] = Math.tanh(d[i] * 2.0) / 2.0;
+      finish(d, sr, 0.95, 40);
+    }
+
+    /* ---------- ③ 落位「咔」：球落进槽里 ---------- */
+    hitBuf = mk(0.55);
+    d = hitBuf.getChannelData(0); n = d.length;
+    {
+      /* 频段选择：搅拌的能量 73% 压在 500~2k，落位主体若也用 1750Hz 就会被掩蔽——
+         声音还在，但听不出来。所以主体略降到 1500Hz 之外，另加一层 210Hz 的实体：
+         0~160Hz 搅拌只剩 0.2%，这一段是落位独占的位置。 */
+      const f = 950 * (0.9 + Math.random() * 0.2);
+      clickInto(d, n, sr, 0.003, 1500, 1.1, 150, 0.12, 1.0, false);    /* 主体：宽带「咔」 */
+      modesInto(d, n, sr, 0.003, f, 120, 0.11, 0.42, 0.05, false);     /* 余振 */
+      modesInto(d, n, sr, 0.003, 210, 45, 0.16, 0.26, 0.05, false);    /* 球体实体（独占低频段） */
+      thumpInto(d, n, sr, 0.003, 0.12, 95, 0.05, 0.70);                /* 落进去的重量 */
+      clickInto(d, n, sr, 0.070, 2150, 1.3, 160, 0.07, 0.34, false);   /* 在槽里再磕一下 */
+      modesInto(d, n, sr, 0.070, f * 0.94, 150, 0.06, 0.16, 0.06, false);
+      clickInto(d, n, sr, 0.126, 2450, 1.5, 180, 0.06, 0.15, false);   /* 弹起后落定 */
+      roomInto(d, sr, 0.12, false);
+      finish(d, sr, 0.9, 60);
+    }
+
+    /* ---------- ④ 开局：机器启动（电磁阀「咔」+ 金属短鸣） ---------- */
+    clunkBuf = mk(0.45);
+    d = clunkBuf.getChannelData(0); n = d.length;
+    {
+      thumpInto(d, n, sr, 0.0, 0.15, 70, 0.20, 0.85);                  /* 电磁阀闷响（别太矮） */
+      clickInto(d, n, sr, 0.0, 900, 1.0, 70, 0.14, 0.80, false);       /* 金属壳「啪」 */
+      modesInto(d, n, sr, 0.0, 240, 60, 0.22, 0.30, 0.05, false);
+      clickInto(d, n, sr, 0.062, 1250, 1.2, 110, 0.09, 0.30, false);   /* 电机咬合 */
+      roomInto(d, sr, 0.14, false);
+      finish(d, sr, 0.9, 60);
+    }
+
+    /* ---------- ⑤ 开阀：金属片沿导轨滑动到位 ---------- */
+    slideBuf = mk(0.42);
+    d = slideBuf.getChannelData(0); n = d.length;
+    {
+      let hp = 0, lp = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const nz = Math.random() * 2 - 1;
+        hp += (nz - hp) * (0.13 + 0.17 * Math.min(1, t / 0.2));
+        lp += (hp - lp) * 0.03;
+        const env = Math.min(1, t / 0.025) * Math.exp(-t * 6.5);
+        d[i] = (hp - lp) * env * 0.85;
+      }
+      clickInto(d, n, sr, 0.012, 1100, 1.1, 90, 0.10, 0.45, false);    /* 起手「嗒」 */
+      modesInto(d, n, sr, 0.012, 470, 70, 0.12, 0.20, 0.06, false);
+      clickInto(d, n, sr, 0.255, 820, 0.9, 55, 0.20, 0.85, false);     /* 到位「嗒」 */
+      modesInto(d, n, sr, 0.255, 610, 45, 0.20, 0.30, 0.05, false);
+      roomInto(d, sr, 0.13, false);
+      finish(d, sr, 0.85, 50);
+    }
+
+    /* ---------- ⑥ 出球：球滑出管口的一声轻「嘟」 ----------
+       刻意不带 thumpInto：低频那头正是「哐」的来源（上一版有 620Hz 模态 +
+       低频 thump，听起来像重物落桌）。这里只留中频的一记短撞 + 极短余振，
+       音高抬到 ~950Hz，听感是干净的一声「嘟」。 */
+    outBuf = mk(0.22);
+    d = outBuf.getChannelData(0); n = d.length;
+    {
+      sweepInto(d, n, sr, 0.0, 940, 560, 6.5, 15, 0.20, 1.0);          /* 主体：一声「嘟」 */
+      clickInto(d, n, sr, 0.0, 1500, 1.2, 240, 0.03, 0.20, false);     /* 起点的「嗒」 */
+      roomInto(d, sr, 0.05, false);
+      finish(d, sr, 0.72, 40);
+    }
+
+    /* ---------- ⑦ 完成：三记金属铃（非谐波模态，不是三音和弦） ---------- */
+    chimeBuf = mk(1.15);
+    d = chimeBuf.getChannelData(0); n = d.length;
+    {
+      const F = [523.25, 659.25, 783.99];
+      for (let k = 0; k < 3; k++) {
+        clickInto(d, n, sr, 0.004 + k * 0.105, 3200, 1.0, 300, 0.02, 0.55, false);
+        modesInto(d, n, sr, 0.004 + k * 0.105, F[k] * (1 + (Math.random() - 0.5) * 0.006),
+                  3.4, 1.1, 0.55 - k * 0.06, 0.012, false, 0.004);
+      }
+      roomInto(d, sr, 0.18, false);
+      finish(d, sr, 0.9, 120);
+    }
+
+    /* ---------- ⑧ 复位：气动泄压「噗」+ 金属件归位「嗒」 ----------
+       原来的 0.1s 轻「嗒」在总线上只有 -60dBFS，等于没有。复位是个明确的操作反馈，
+       该有一记实心的声音：低通噪声给气阀泄压的厚度，中频带通给金属片落回原位。 */
+    tickBuf = mk(0.42);
+    d = tickBuf.getChannelData(0); n = d.length;
+    {
+      thumpInto(d, n, sr, 0.000, 0.10, 45, 0.22, 0.80);                /* 气阀泄压 */
+      clickInto(d, n, sr, 0.000, 820, 1.0, 60, 0.16, 0.60, false);
+      modesInto(d, n, sr, 0.000, 300, 55, 0.18, 0.26, 0.05, false);
+      clickInto(d, n, sr, 0.150, 1700, 1.3, 180, 0.08, 0.50, false);   /* 金属件归位 */
+      modesInto(d, n, sr, 0.150, 760, 130, 0.09, 0.24, 0.05, false);
+      clickInto(d, n, sr, 0.235, 2100, 1.5, 240, 0.06, 0.22, false);   /* 落定 */
+      roomInto(d, sr, 0.12, false);
+      finish(d, sr, 0.88, 55);
+    }
+
+    /* ---------- ⑨ 搅拌：拨盘推着球在玻璃腔里翻滚（4s 无缝循环） ----------
+       目标不是「好听的一段」，是**听不出在循环**。真实搅拌里每颗球都在响，
+       但总响度几乎恒定；一旦包络有周期性，耳朵立刻抓到「隔一会儿哐一声」。
+       三步保证稳态：颗粒均匀铺满、200Hz 高通去掉腔体轰隆、RMS 包络压平。 */
+    stirBuf = mk(4.0);
+    d = stirBuf.getChannelData(0); n = d.length;
+    {
+      /* 这一层曾经是一条 180~3300Hz 的带通白噪声「底床」，用来给「一直有东西在动」的质感。
+         它是错的：实测颗粒间隙里仍有 73% 的能量（去掉后只有 15%），2k~6k 从 6% 抬到 19%，
+         听感就是一层永不间断的「沙沙」——真实搅拌里没有这种声音，球本身不发声，
+         响的只有撞击。连续性应该由撞击的密度给出，不能用噪声床糊上去。
+         所以这层删掉，改为提高颗粒密度（46 → 58 颗/秒）。 */
+
+      /* 撞球颗粒：均匀铺开。振幅用 r*r 分布——多数轻、少数重，
+         重击落点随机，所以不会形成节拍；写的是 k/NG 等分点就会密集成拍。 */
+      const NG = Math.round(4.0 * 58);
+      for (let k = 0; k < NG; k++) {
+        const t0 = Math.random() * 4.0;
+        const r = Math.random();
+        grainInto(d, n, sr, Math.floor(t0 * sr),
+                  360 + Math.random() * 1450,
+                  2.3 + Math.random() * 2.7,
+                  35 + Math.random() * 55,
+                  0.22 + r * r * 0.60);
+      }
+
+      /* 腔体高通 200Hz：Ø50mm 硬球撞玻璃没有多少低频，留着只会变成「轰」 */
+      let hz = 0;
+      for (let i = 0; i < n; i++) { hz += (d[i] - hz) * 0.053; d[i] -= hz; }
+
+      /* 腔体低通（一阶 ≈2.4kHz，6dB/oct）：只削掉噪声瞬态自带的那层「嘶」，
+         不把中高频一起削平。两级低通（12dB/oct）会把 2k 以上削到只剩一成，
+         声音就闷成一片「沙沙」——那是水，不是硬球撞玻璃。 */
+      let lz1 = 0;
+      for (let i = 0; i < n; i++) { lz1 += (d[i] - lz1) * 0.50; d[i] = lz1; }
+
+      /* RMS 包络压平：50ms 一窗，增益钳在 0.6~1.7（不压过头，否则颗粒感被磨成白噪声），
+         再环形三次平滑——相邻窗的增益必须连续，跳变本身就是「一下一下」。 */
+      const wl = Math.floor(sr * 0.05), wn = Math.max(2, Math.floor(n / wl));
+      const rmsA = new Float32Array(wn);
+      for (let w = 0; w < wn; w++) {
+        const i0 = w * wl, i1 = Math.min(n, i0 + wl);
+        let s = 0;
+        for (let i = i0; i < i1; i++) { const v = d[i]; s += v * v; }
+        rmsA[w] = Math.sqrt(s / Math.max(1, i1 - i0));
+      }
+      const sorted = Array.prototype.slice.call(rmsA).sort((x, y) => x - y);
+      const mid = Math.max(1e-5, sorted[Math.floor(wn * 0.5)]);
+      let gA = new Float32Array(wn);
+      for (let w = 0; w < wn; w++) {
+        const g0 = mid / Math.max(rmsA[w], 1e-5);
+        gA[w] = g0 > 1.55 ? 1.55 : (g0 < 0.66 ? 0.66 : g0);
+      }
+      for (let p = 0; p < 4; p++) {
+        const g2 = new Float32Array(wn);
+        for (let w = 0; w < wn; w++) {
+          g2[w] = (gA[(w + wn - 1) % wn] + 2 * gA[w] + gA[(w + 1) % wn]) * 0.25;
+        }
+        gA = g2;
+      }
+      for (let i = 0; i < n; i++) {
+        const q = i / wl, w0 = Math.floor(q), fr = q - w0;
+        d[i] *= gA[w0 % wn] * (1 - fr) + gA[(w0 + 1) % wn] * fr;
+      }
+
+      /* 定响度：先按 RMS 0.17 归一，再用 tanh 软饱和压住尖峰。
+         顺序是关键——先钳峰值会把 RMS 一起压死：上一版峰值卡 0.6，RMS 只能到 0.099，
+         总线电平 -50dBFS，等于没开。持续底噪的感知门槛比瞬态事件高得多，
+         要听得见就得让 RMS 站住，尖峰交给 tanh 削（只削最尖的几颗，颗粒感还在）。 */
+      let pk = 0, ss = 0;
+      for (let i = 0; i < n; i++) {
+        const v = d[i]; ss += v * v;
+        const av = v < 0 ? -v : v; if (av > pk) pk = av;
+      }
+      const g = 0.17 / Math.max(1e-6, Math.sqrt(ss / n));
+      const drive = pk * g / 0.58;                   /* 归一后的峰值收敛到 ~0.58 */
+      for (let i = 0; i < n; i++) d[i] = Math.tanh(d[i] * g * drive) / drive;
+    }
+    rawSet = { sr, fall: fallBuf, stir: stirBuf, hit: hitBuf, clunk: clunkBuf,
+               slide: slideBuf, out: outBuf, chime: chimeBuf, tick: tickBuf };
+  }
+
+  /* 把算好的 Float32Array 灌进真 AudioBuffer。这是首次点击唯一要做的事。
+     copyToChannel 不是所有实现都有（微信小游戏早期版本没有），回退到 set()。 */
+  function uploadSamples() {
+    const R = rawSet; if (!R) return false;
+    const to = f => {
+      const src = f.getChannelData(0);
+      const b = ctx.createBuffer(1, src.length, R.sr);
+      if (b.copyToChannel) b.copyToChannel(src, 0);
+      else b.getChannelData(0).set(src);
+      return b;
+    };
+    fallBuf = to(R.fall); stirBuf = to(R.stir); hitBuf = to(R.hit);
+    clunkBuf = to(R.clunk); slideBuf = to(R.slide); outBuf = to(R.out);
+    chimeBuf = to(R.chime); tickBuf = to(R.tick);
+    return true;
+  }
+
+  /* ================= 播放（运行时，只建 BufferSource + Gain） ================= */
+  function playBuf(b, vol, when, rate) {
+    if (!ensure() || muted || !b) return;
+    const t = now() + (when || 0);
+    const s = ctx.createBufferSource();
+    s.buffer = b;
+    if (rate) s.playbackRate.value = rate;
     const g = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, t0);
-    if (freqEnd) osc.frequency.exponentialRampToValueAtTime(Math.max(1, freqEnd), t0 + dur);
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(vol, t0 + attack);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-    osc.connect(g).connect(master);
-    osc.start(t0);
-    osc.stop(t0 + dur + 0.03);
+    g.gain.value = vol;
+    s.connect(g).connect(master);
+    /* 播完主动断开：不依赖 GC 回收 AudioNode（各实现时机差异很大，
+       一局下来会挂着几十个已静音的节点）。 */
+    s.onended = () => { try { s.disconnect(); g.disconnect(); } catch (e) {} };
+    s.start(t);
+  }
+  const vary = (a) => 1 - a + Math.random() * a * 2;   /* 每次播放微调速度：同一采样也不会「复读」 */
+
+  function start() { playBuf(clunkBuf, 0.85, 0, vary(0.03)); }     /* 开局：机器启动 */
+  function gateOpen() { playBuf(slideBuf, 0.62, 0, vary(0.04)); }   /* 开阀：导轨滑动 */
+  function ballOut() { playBuf(outBuf, 1.60, 0, vary(0.05)); }      /* 出球：必须压过搅拌底噪 */
+  function place() { playBuf(hitBuf, 1.30, 0, vary(0.06)); }        /* 落位：要压过搅拌底噪 */
+  function done() { playBuf(chimeBuf, 0.62, 0, vary(0.015)); }      /* 完成 */
+  function reset() { playBuf(tickBuf, 0.75, 0, vary(0.06)); }       /* 复位：泄压 + 归位 */
+
+  /* ---------- ② 下落：整批球落入搅拌室（1 个 BufferSource + 1 个 Gain，播完即回收） ---------- */
+  function ballFall(power) {
+    if (!ensure()) return;
+    const t = now();
+    if (t - tFall < 0.12) return;                 /* 连发合并：几十颗球一起落，听感是一声而不是一片杂音 */
+    tFall = t;
+    const p = clamp01(power === undefined ? 1 : power) * 0.6 + 0.4;
+    const s = ctx.createBufferSource();
+    s.buffer = fallBuf;
+    s.playbackRate.value = 0.96 + Math.random() * 0.08;
+    const g = ctx.createGain();
+    /* 40ms 渐入：不给渐入的话起头是一个直角，听感像有人突然拍桌子 */
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.55 * p, t + 0.04);
+    s.connect(g).connect(master);
+    s.onended = () => { try { s.disconnect(); g.disconnect(); } catch (e) {} };
+    s.start(t);
   }
 
-  function start() {                              /* 开奖开始：上扬双音 */
-    tone({ freq: 523.25, type: 'triangle', dur: 0.16, vol: 0.45 });
-    tone({ freq: 783.99, type: 'triangle', dur: 0.22, vol: 0.45, when: 0.12 });
-  }
-  function gateOpen() {                           /* 闸门抽开：低→中机械扫频 */
-    tone({ freq: 190, freqEnd: 90, type: 'sawtooth', dur: 0.34, vol: 0.16 });
-  }
-  function ballOut() {                            /* 出球滑落：短促下行「咻」 */
-    tone({ freq: 900, freqEnd: 320, type: 'sine', dur: 0.18, vol: 0.22 });
-  }
-  function place() {                              /* 球落位：清脆「叮」（双泛音） */
-    tone({ freq: 1046.5, type: 'triangle', dur: 0.14, vol: 0.30 });
-    tone({ freq: 2093.0, type: 'sine', dur: 0.10, vol: 0.13 });
-  }
-  function done() {                               /* 开奖完成：上行三音和弦 */
-    [523.25, 659.25, 783.99].forEach((f, i) =>
-      tone({ freq: f, type: 'triangle', dur: 0.5, vol: 0.4, when: i * 0.14 }));
-  }
-  function reset() {                              /* 复位：轻短下行音 */
-    tone({ freq: 440, freqEnd: 220, type: 'sine', dur: 0.16, vol: 0.18 });
-  }
-
-  /* 搅拌持续音：低频锯齿嗡鸣 + 噪声摩擦层，gain 跟随搅拌强度(0~1)。
-     这是最初那版「机器运转嗡嗡嗡」，结构简单、听感稳，不再做颗粒合成。 */
-  function startStir() {
-    if (!ensure() || stirReady) return;
-    stirGain = ctx.createGain(); stirGain.gain.value = 0.0001;
-    stirFilter = ctx.createBiquadFilter(); stirFilter.type = 'lowpass'; stirFilter.frequency.value = 320;
+  /* ---------- ⑨ 搅拌底噪（整个工程唯一的常驻音源） ----------
+     一直挂着、loop=true，只用跟随的增益门控：摇奖中不创建任何节点，
+     停转时把增益拉到 0 而不是 stop()——BufferSource 只能 start 一次，
+     真停掉就得每局重建，那才是热路径上的分配。
+     这里刻意不调 ensure()：页面首帧就该调它，但那会绕过用户手势创建 AudioContext。 */
+  function startStirLoop() {
+    if (!stirBuf || stirSrc) return;
+    stirGain = ctx.createGain();
+    stirGain.gain.value = 0;
     stirGain.connect(master);
-    stirOsc = ctx.createOscillator(); stirOsc.type = 'sawtooth'; stirOsc.frequency.value = 70;
-    const og = ctx.createGain(); og.gain.value = 0.5;
-    stirOsc.connect(og).connect(stirFilter);
-    /* 噪声摩擦层：让嗡鸣带一点「球在滚」的沙沙质感 */
-    const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 1.5), ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.5;
-    const noise = ctx.createBufferSource(); noise.buffer = buf; noise.loop = true;
-    const nf = ctx.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 220; nf.Q.value = 0.7;
-    const ng = ctx.createGain(); ng.gain.value = 0.22;
-    noise.connect(nf).connect(ng).connect(stirFilter);
-    stirFilter.connect(stirGain);
-    stirOsc.start(); noise.start();
-    stirReady = true;
+    stirSrc = ctx.createBufferSource();
+    stirSrc.buffer = stirBuf;
+    stirSrc.loop = true;
+    stirSrc.connect(stirGain);
+    stirSrc.start(ctx.currentTime);   /* 不能写 0：0 是绝对时间戳，早于 ctx 起始 */
   }
-  function setStir(level) {
-    if (!stirReady || !ctx) return;
-    const lv = Math.max(0, Math.min(1, level || 0));
-    stirGain.gain.setTargetAtTime(muted ? 0 : lv * 0.5, ctx.currentTime, 0.08);
-    if (stirOsc) stirOsc.frequency.setTargetAtTime(60 + lv * 42, ctx.currentTime, 0.1);
+  /* level 0~1 跟随拨盘转速：起转时声音跟着上来，停转时跟着淡下去。
+     0.005 死区是给主循环每帧调用用的——否则 setTargetAtTime 每帧排一个新事件。 */
+  function stir(level) {
+    if (!stirGain) return;
+    const v = muted ? 0 : clamp01(level) * STIR_LV;
+    if (v - stirLv < 0.005 && stirLv - v < 0.005) return;
+    stirLv = v;
+    stirGain.gain.setTargetAtTime(v, ctx.currentTime, 0.09);
   }
-  function stopStir() { setStir(0); }
 
-  function mute(on) {
-    muted = on;
-    if (master && ctx) master.gain.setTargetAtTime(on ? 0 : 0.7, ctx.currentTime, 0.02);
+  /* 空闲预合成：只算数据，不建 AudioContext（无需用户手势）。
+     首次点击时 rawSet 已在，只剩 createBuffer + 拷贝。 */
+  function prime() {
+    if (rawSet) return true;
+    try { buildSamples(SR); return true; } catch (e) { rawSet = null; return false; }
   }
-  function isMuted() { return muted; }
 
-  return { ensure, start, gateOpen, ballOut, place, done, reset, startStir, setStir, stopStir, mute, isMuted };
+  /* 诊断口：仅 ?debug 下存在。查「搅拌到底有没有出声」用——
+     gain 是不是推上去了、buffer 里到底有没有能量。 */
+  const dbg = () => {
+    if (!stirBuf) return { ok: false };
+    const c = stirBuf.getChannelData(0);
+    let pk = 0, ss = 0, m = 0;
+    for (let i = 0; i < c.length; i += 3) {
+      const a = c[i] < 0 ? -c[i] : c[i];
+      if (a > pk) pk = a;
+      ss += c[i] * c[i]; m++;
+    }
+    return {
+      ok: true, sr: stirBuf.sampleRate, dur: stirBuf.duration,
+      peak: +pk.toFixed(3), rms: +Math.sqrt(ss / m).toFixed(4),
+      gain: stirGain ? +stirGain.gain.value.toFixed(3) : -1,
+      playing: !!stirSrc, ctxState: ctx && ctx.state, muted
+    };
+  };
+  if (location.search.indexOf('debug') >= 0) window.__AFX = dbg;
+
+  return {
+    ensure, prime, start, gateOpen, ballOut, ballFall, stir, place, done, reset
+  };
 })();
 
 /* ================= 场景基础 =================
@@ -481,16 +958,70 @@ const DT = 1 / 120;
 const machines = [];
 const metalMat = new THREE.MeshStandardMaterial({ color: 0xb9c3e2, metalness: 1, roughness: 0.2, envMapIntensity: 1.3 });
 const blueBase = new THREE.MeshPhysicalMaterial({ color: 0x2743d0, roughness: 0.3, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.18, envMapIntensity: 0.9 });
-const blueDeep = new THREE.MeshPhysicalMaterial({ color: 0x1c2f9e, roughness: 0.38, metalness: 0.25, clearcoat: 1, clearcoatRoughness: 0.2, envMapIntensity: 0.8 });
-/* 球壳 = 半透明有机玻璃（PMMA）的「移动近似」：用半透明 + 环境反射 + 轻清漆表现玻璃感。
+/* ============ 玻璃「看得清」靠菲涅尔边缘，不靠加透明度 ============
+   半透明物体最先丢掉的是轮廓。均匀 opacity 会让整片球面一起泛白：
+   看起来是一团雾，还把里面的球蒙住了 —— 尤其把环境反射去掉后，没有任何
+   明暗线索，壳等于消失。真实玻璃恰好相反：正对视线几乎全透，只有在掠射角
+   的边缘才反射发亮。所以把「存在感」从 opacity 搬到 fresnel 上：
+     · 正面 dot(N,V)≈1 → fres≈0 → 全透，球堆干净可见
+     · 轮廓 dot(N,V)≈0 → fres≈1 → 边上一圈冷色反光，球形/直筒边界立起来
+   代价：片元里 1 次 dot + 1 次 pow，无额外 draw call / pass / 纹理，
+   也不依赖环境贴图（去反射后依然成立）。强度与锐度是 uniform，运行时可调。 */
+const GLASS_RIM = { strength: 0.80, power: 3.2, tint: new THREE.Color(0.54, 0.68, 0.94) };
+function applySurfaceRim(mat, opts) {
+  const o = opts || {};
+  /* k = 该件相对球壳的强度比例：整体调参时各件的层次不会被抹平
+     （球壳最需要存在感，薄壁管/槽只需勾边，托盘等不需要） */
+  const rim = mat.userData.rim = {
+    k: (o.strength != null ? o.strength : GLASS_RIM.strength) / GLASS_RIM.strength,
+    power: o.power != null ? o.power : GLASS_RIM.power,
+    shader: null
+  };
+  const col = o.tint || GLASS_RIM.tint;
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uRimColor = { value: col };
+    shader.uniforms.uRimStrength = { value: GLASS_RIM.strength * rim.k };
+    shader.uniforms.uRimPower = { value: rim.power };
+    shader.fragmentShader = shader.fragmentShader
+      .replace('void main() {', 'uniform vec3 uRimColor;\nuniform float uRimStrength;\nuniform float uRimPower;\nvoid main() {')
+      .replace('#include <dithering_fragment>', `
+        {
+          float ndv = clamp( dot( normalize( normal ), normalize( vViewPosition ) ), 0.0, 1.0 );
+          float fres = pow( 1.0 - ndv, uRimPower );
+          gl_FragColor.rgb += uRimColor * ( fres * uRimStrength );
+          gl_FragColor.a = clamp( gl_FragColor.a + fres * uRimStrength, 0.0, 1.0 );
+        }
+        #include <dithering_fragment>`);
+    rim.shader = shader;
+  };
+  /* 同一段 GLSL → 同一 program：壳与其余亚克力件共用，省一次编译和切换 */
+  mat.customProgramCacheKey = () => 'surface-rim';
+  mat.needsUpdate = true;
+  return mat;
+}
+/* 实时调参：setGlassRim(0.8, 3.2)。strength = 边缘亮度，power = 边缘锐度（越大越细）。
+   已编译的 shader 直接改 uniform，不重编译、不掉帧，适合边看边调。 */
+function setGlassRim(strength, power) {
+  if (strength != null) GLASS_RIM.strength = strength;
+  if (power != null) GLASS_RIM.power = power;
+  scene.traverse(o => {
+    const r = o.isMesh && o.material && o.material.userData && o.material.userData.rim;
+    if (!r || !r.shader) return;
+    r.shader.uniforms.uRimStrength.value = GLASS_RIM.strength * r.k;
+    r.shader.uniforms.uRimPower.value = power != null ? power : r.power;
+  });
+}
+/* 球壳 = 半透明有机玻璃（PMMA）的「移动近似」：半透明 + 菲涅尔边缘表现玻璃感。
    注：真·物理透射(transmission) 在手机 GPU 上极贵（需额外渲染一遍不透明场景），
-   故此移动基线放弃 transmission，改用下面的廉价近似，视觉接近但帧率友好。 */
+   故此移动基线放弃 transmission，改用下面的廉价近似，视觉接近但帧率友好。
+   opacity 从 0.16 降到 0.08：均匀泛白正是「一团雾」的来源，形体交给上面的边缘光。 */
 const glassMat = new THREE.MeshPhysicalMaterial({
   color: 0xffffff, metalness: 0, roughness: 0.05, ior: 1.49,
-  transparent: true, opacity: 0.16,
+  transparent: true, opacity: 0.08,
   clearcoat: 0.3, clearcoatRoughness: 0.1, envMapIntensity: 1.3, specularIntensity: 0.5,
   side: THREE.FrontSide, depthWrite: false
 });
+applySurfaceRim(glassMat);
 /* 其余透明件（滑道/预览管/搅拌盘）：同款有机玻璃观感，调更透亮 */
 const acrylicMat = new THREE.MeshPhysicalMaterial({
   color: 0xeef5ff, metalness: 0, roughness: 0.02, ior: 1.49,
@@ -498,9 +1029,58 @@ const acrylicMat = new THREE.MeshPhysicalMaterial({
   clearcoat: 1, clearcoatRoughness: 0.02, envMapIntensity: 2.6,
   specularIntensity: 1, specularColor: 0xffffff
 });
-/* 滑槽材质 = 直接复用整机亚克力材质（同一个实例，颜色/透明度/高光不可能漂移）。
-   槽壁变矮后球露出上半球，靠球的轮廓就能读出滑道走向，不需要再给槽体单独提亮。 */
-const railMat = acrylicMat;
+/* 薄壁件（预览管 / 滑道）专用：同款有机玻璃，但多一圈菲涅尔勾边。
+   它们比球壳更「虚」——壁厚只有 2cm 量级、正对视线时几乎零像素，
+   去掉反射后球在管里、在槽里都像浮空，读不出约束它的东西在哪。
+   勾边只加在边缘（管的两条竖直边、槽的两道侧壁棱），中间仍全透，
+   不会挡住球；管壁是 DoubleSide，正反两面各叠一次，故强度只取球壳的 0.45
+   （0.75 时管径在屏幕上仅几像素，两侧边光直接糊成一根白管，反而像磨砂塑料）。
+   特意不与 acrylicMat 共用实例：托盘/叶片/鼓身不要这圈边（转动时会闪成花）。 */
+const clearEdgeMat = acrylicMat.clone();
+applySurfaceRim(clearEdgeMat, { strength: GLASS_RIM.strength * 0.45, power: 3.6 });
+/* 滑槽单独一档、明显更重：槽壁只有 4.5cm 高（壁顶还低于球心），法线基本朝着相机，
+   掠射角很小 → 同样的 fresnel 在槽上比在球面上弱得多，不提强度等于没加。
+   power 放低让边更宽，窄壁上才留得住可见像素。 */
+const railMat = acrylicMat.clone();
+applySurfaceRim(railMat, { strength: GLASS_RIM.strength * 0.95, power: 2.6 });
+/* 正反转动结构（内盘 / 外环带 / 拨块 / 挡圈）也要勾边，但比静止件更克制：
+   这些件一直在转，边光会随法线扫过盘面 —— 强度一高，转起来就是一片闪烁。
+   0.35 只让盘沿和拨块的棱留一道清楚的边，读作「玻璃盘在转」而不是「灯在闪」。
+   参数与 clearEdgeMat 完全一致（只有 uniform 不同）→ 复用同一个 shader program。 */
+const rotorMat = acrylicMat.clone();
+applySurfaceRim(rotorMat, { strength: GLASS_RIM.strength * 0.35, power: 3.4 });
+/* 预览架顶盖 = 一块「有色亚克力瓦」，按机器各上一种颜色（左机全红 / 右机全蓝）。
+   这是整台机器上唯一有面积、有颜色的透明件 —— 其余件全清透，顶部一直缺一层
+   能把「预览架」和「球壳」分开的重色，加这块板正好补上这道层次，还顺手把
+   两台机器在主视角下区分开（远景看顶部颜色就知道哪台是哪台）。
+   用工厂函数而不是 clone()：clone 不复制实例上的 onBeforeCompile，
+   克隆出来会丢掉勾边（踩过一次）。两个实例参数完全相同、只有 color uniform
+   不同 → 与 clearEdgeMat 共用同一个 shader program，program 数量不涨。
+   opacity 0.8：颜色要和底座、赤道圈读成同一个色，就不能让背景透太多 ——
+   0.62 时天空会透进来把红冲成粉，远看三处是三个红度。0.8 后颜色压得住，
+   管口穿进洞里仍然略见管身，不至于变成一块实心塑料板。 */
+function makeCoverMat(hex) {
+  const m = new THREE.MeshPhysicalMaterial({
+    color: hex, metalness: 0, roughness: 0.24, ior: 1.49,
+    transparent: true, opacity: 0.8,
+    clearcoat: 0.5, clearcoatRoughness: 0.18, envMapIntensity: 1.1,
+    specularIntensity: 0.8,
+    /* 这块板是「一个实心挤出体」，不是一片薄玻璃：
+       DoubleSide + depthWrite:false 会把顶面、底面、每个孔的内壁全都画一遍，
+       叠出「两层板错位摞着」的假象（孔越多越明显）。
+       改成 FrontSide（只画朝外的面，实心体本来就是闭合的）+ depthWrite:true
+       （让顶面写深度、把底面孔壁挡掉），才是单层实心板该有的样子。 */
+    side: THREE.FrontSide, depthWrite: true
+  });
+  /* 边光取近白：冷蓝边光叠在红板上会把红侧染紫。
+     强度只给 0.32：这块板本身已经满色，边光再亮就成了霓虹描边，
+     反而把人眼从「有色玻璃」带到「发光塑料条」上。 */
+  applySurfaceRim(m, {
+    strength: GLASS_RIM.strength * 0.32, power: 3.4,
+    tint: new THREE.Color(0.96, 0.96, 1.0)
+  });
+  return m;
+}
 
 /* ============ 真机几何参数（DESIGN.md 定案） ============
    底座 = 深蓝直筒圆柱 Ø0.75m（比球壳宽一圈），正面红色双色球 LOGO，顶面透明亚克力平台。
@@ -739,6 +1319,9 @@ function buildMachine(cfg) {
       actx.fill();
     }
     const shellMat = glassMat.clone();
+    /* clone() 只复制属性，不复制挂在实例上的 onBeforeCompile —— 必须重新挂一次边缘光，
+       否则真正上屏的球壳恰恰是唯一没有 fresnel 的那一个（clone 出来的是空壳材质）。 */
+    applySurfaceRim(shellMat);
     shellMat.alphaMap = new THREE.CanvasTexture(acv);
     shellMat.alphaTest = 0.03;
     shellMat.needsUpdate = true;
@@ -748,15 +1331,39 @@ function buildMachine(cfg) {
   /* 壳内补光：电视上球壳内部打光，球堆有高光闪烁感 */
   const shellLight = new THREE.PointLight(0xfff2dc, 1.5, 3.5, 2);
   shellLight.position.set(cx, cy - 0.15, cz + 0.35); scene.add(shellLight);
-  /* 赤道接缝（两个半球的可开合处，装饰） */
-  const seam = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 64), blueDeep);
+  /* 赤道接缝（两个半球的可开合处，装饰）：直接复用底座主色材质 baseMat ——
+     不是「填同一个色号」，而是同一个材质实例，所以颜色、粗糙度、金属度、
+     清漆、环境反射强度全都一模一样，顶盖 + 这道圈 + 柱身在三种不同体量、
+     不同受光角度下仍然是同一块颜色，不会出现「远处看是一个色、近看偏了」。
+     原来两台都挂 blueDeep，红机上一道蓝圈，像从蓝机拆过来的件。 */
+  const seam = new THREE.Mesh(new THREE.TorusGeometry(R, 0.018, 8, 64), baseMat);
   seam.rotation.x = Math.PI / 2; seam.position.set(cx, cy, cz); scene.add(seam);
 
-  /* 出球口：球壳下前方一个简单圆形出口——壳面真开洞（alphaMap），不加白圈、
-     不加挡板：玻璃本身近乎全透明，任何贴在孔口的圈/板看起来都是悬浮的异物。
+  /* 出球口：球壳下前方一个简单圆形出口——壳面真开洞（alphaMap）。
      球从壳上这个圆孔直接落下 */
   const exR = R * Math.sin(cfg.exitHalf);
-  /* 挡板（翻板）已去掉——出球口就是壳面上一个简单的圆孔，白圈只是孔沿切边。
+  /* 孔沿：壳面开洞后，洞边什么都没有——alphaTest 是硬切，玻璃又没有厚度，
+     所以孔看起来是个「凭空的黑洞」，球像掉进虚空里。这里补一圈玻璃壁厚的切面：
+     Torus 的法线全是径向（垂直于孔轴），对相机正好是掠射角，边缘光会自动把它点亮，
+     读出来是玻璃切边的反光，而不是贴在孔上的白圈（那正是当初去掉白圈的原因）。
+     环半径 = 洞半径，环体略微外扩 0.014 盖住 alphaTest 切出来的锯齿边。
+     内径 0.12 > 球半径 0.089，球照常穿过，纯视觉件、不参与物理。 */
+  {
+    const holeRim = new THREE.Mesh(new THREE.TorusGeometry(exR, 0.014, 8, 40), glassMat);
+    holeRim.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R * 0.998);
+    holeRim.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), cfg.exitDir);
+    holeRim.renderOrder = 7;
+    scene.add(holeRim);
+    /* 只有一圈环还是读成「贴在球上的椭圆圈」——球壳按薄面渲染，本来没有厚度。
+       补一段 2.5cm 的开口短筒沿孔轴伸进球内，孔才有内壁，边缘自然分成内外两条棱，
+       一眼看得出「这是穿透的洞」而不是描了个圈。内半径 0.134 远大于球半径 0.089，不挡球。 */
+    const holeWall = new THREE.Mesh(new THREE.CylinderGeometry(exR, exR, 0.025, 36, 1, true), glassMat);
+    holeWall.position.set(cx, cy, cz).addScaledVector(cfg.exitDir, R - 0.0125);
+    holeWall.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cfg.exitDir);
+    holeWall.renderOrder = 7;
+    scene.add(holeWall);
+  }
+  /* 挡板（翻板）已去掉——出球口就是壳面上一个简单的圆孔，孔沿由上面那圈切面表达。
      valvePivot 仅供动画代码引用，保留空组防止引用报错 */
   const valvePivot = new THREE.Group();
 
@@ -780,22 +1387,32 @@ function buildMachine(cfg) {
   {
     const drum = new THREE.Mesh(new THREE.CylinderGeometry(0.30, 0.30, 0.14, 32, 1, true), acrylicMat);
     drum.position.set(cx, rotorY - 0.07, cz); drum.renderOrder = 6; scene.add(drum);
-    const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.09, 24), brightMetal);
-    motor.position.set(cx, rotorY - 0.05, cz); scene.add(motor);
+    /* 电机柱：原先是 Ø0.13×9cm 的小圆片悬在托盘下方 10cm（像一片浮着的铁片）。
+       现在从转子盘底面一路做到插进基座顶面以下：
+         顶 MOTOR_TOP = rotorY - 0.005（紧贴转子盘底）
+         底 MOTOR_BOT = 2.36（基座/托盘顶面 2.42 再往下 6cm，接口藏进板里，看不到缝）
+       中段从鼓形托壳下沿露出来，读作「电机安装柱」而不是一片金属。 */
+    const MOTOR_TOP = rotorY - 0.005, MOTOR_BOT = 2.36;
+    const motor = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, MOTOR_TOP - MOTOR_BOT, 24), brightMetal);
+    motor.position.set(cx, (MOTOR_TOP + MOTOR_BOT) / 2, cz); scene.add(motor);
+    /* 底座上的一圈法兰盘：细柱直接插进平台显得单薄，加个薄圆台做过渡。
+       直径收在 Ø0.37（电机 Ø0.26 的 1.4 倍）—— 再大就盖住底座顶面，像扣了个盘子在柱子上。 */
+    const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.168, 0.192, 0.05, 28), brightMetal);
+    flange.position.set(cx, 2.412, cz); scene.add(flange);
     const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.06, 10), brightMetal);
     shaft.position.set(cx, rotorY - 0.03, cz); scene.add(shaft);
   }
   /* 内盘（r ≤ rHub，3 个半球拨凸） */
   const inner = new THREE.Group();
   inner.position.set(cx, rotorY, cz); scene.add(inner);
-  const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), acrylicMat);
+  const hub = new THREE.Mesh(new THREE.CylinderGeometry(cfg.rHub, cfg.rHub, 0.05, 32), rotorMat);
   hub.position.y = 0.025; hub.renderOrder = 6; inner.add(hub);
   /* 拨块：内圈 2 小块（真机同款） */
   const wedgeIn = new THREE.CylinderGeometry(0.035, 0.060, 0.060, 4, 1);
   wedgeIn.rotateY(Math.PI / 4);
   for (let k = 0; k < 2; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 2 * Math.PI * 2 + 0.4;
-    const blk = new THREE.Mesh(wedgeIn, acrylicMat);
+    const blk = new THREE.Mesh(wedgeIn, rotorMat);
     blk.position.set(cfg.rHub * 0.62, 0.06, 0); blk.renderOrder = 6;
     hold.add(blk); inner.add(hold);
   }
@@ -809,19 +1426,19 @@ function buildMachine(cfg) {
   ringShape.holes.push(ringHole);
   const ringGeo = new THREE.ExtrudeGeometry(ringShape, { depth: 0.05, bevelEnabled: false, curveSegments: 48 });
   ringGeo.rotateX(-Math.PI / 2);
-  const ring = new THREE.Mesh(ringGeo, acrylicMat);
+  const ring = new THREE.Mesh(ringGeo, rotorMat);
   ring.renderOrder = 6; outer.add(ring);
   /* 外圈 4 大块（真机同款），贴外缘骑贴壁球堆 */
   const wedgeOut = new THREE.CylinderGeometry(0.045, 0.070, 0.070, 4, 1);
   wedgeOut.rotateY(Math.PI / 4);
   for (let k = 0; k < 4; k++) {
     const hold = new THREE.Group(); hold.rotation.y = k / 4 * Math.PI * 2;
-    const blk = new THREE.Mesh(wedgeOut, acrylicMat);
+    const blk = new THREE.Mesh(wedgeOut, rotorMat);
     blk.position.set(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.93, 0.07, 0); blk.renderOrder = 6;
     hold.add(blk); outer.add(hold);
   }
   /* 盘面凸圈（真机同款挡圈）：球聚在圈上被拨块打；随外盘转动（圆环体对称，视觉不动） */
-  const bead = new THREE.Mesh(new THREE.TorusGeometry(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.035, 12, 64), acrylicMat);
+  const bead = new THREE.Mesh(new THREE.TorusGeometry(cfg.gapInner + (cfg.rOuter - cfg.gapInner) * 0.55, 0.035, 12, 64), rotorMat);
   bead.rotation.x = Math.PI / 2; bead.position.y = 0.05; bead.renderOrder = 6; outer.add(bead);
   discSpins.push(outer);
 
@@ -832,7 +1449,14 @@ function buildMachine(cfg) {
   {
     const N = cfg.rackN, rt = cfg.rackRR * R, L = cfg.rackLen;
     const per = Math.floor(cfg.count / N), rem = cfg.count % N;
-    const step = (R_BALL * 2 + 0.005) / rt;          /* 相邻管相切：弧距 = 管径，紧密排列 */
+    /* 相邻管间距必须按【管径】算，不能按球径：原来这里写 R_BALL*2 + 0.005 = 18.2cm，
+       而管径是 21cm —— 12 根管每对都互相插进去 2.8cm。透明管叠在一起看不出来，
+       但顶盖一上色、每根管要穿自己的圆孔就露馅了：孔心距 18.2 而孔径 25，
+       12 个孔连成一片，只剩中间几条月牙。
+       净距 3cm（管径的 14%）：1.8cm 时管与管在屏幕上还像贴在一起，
+       放到 3cm 才读得出「一排独立的管」，板上的圆孔之间也留出 2.2cm 板筋。 */
+    const TUBE_GAP = 0.03;
+    const step = (cfg.tubeR * 2 + TUBE_GAP) / rt;
     let byMin = 1e9;
     for (let i = 0; i < N; i++) {
       const a = (i - (N - 1) / 2) * step;            /* 0 = 正后方，全部竖直 */
@@ -853,14 +1477,14 @@ function buildMachine(cfg) {
         }
         tubeGeo.computeVertexNormals();
       }
-      const tube = new THREE.Mesh(tubeGeo, acrylicMat);
+      const tube = new THREE.Mesh(tubeGeo, clearEdgeMat);
       tube.position.set(bx, by + L / 2, bz);
       tube.renderOrder = 7; scene.add(tube);
       /* 斜切椭圆封口面 */
       const capGeo = new THREE.CircleGeometry(cfg.tubeR, 24);
       capGeo.rotateX(-Math.PI / 2);
       capGeo.scale(1, 1, cutH / 2 / cfg.tubeR);
-      const cap = new THREE.Mesh(capGeo, acrylicMat);
+      const cap = new THREE.Mesh(capGeo, clearEdgeMat);
       cap.position.set(bx, by, bz);
       cap.rotation.x = -Math.atan(cutH / 2 / cfg.tubeR);
       cap.renderOrder = 7; scene.add(cap);
@@ -876,12 +1500,16 @@ function buildMachine(cfg) {
       for (let i = 0; i < N; i++) {
         const a = (i - (N - 1) / 2) * step;
         const hole = new THREE.Path();
-        hole.absarc(Math.sin(a) * rt, Math.cos(a) * rt, cfg.tubeR + 0.02, 0, Math.PI * 2, true);
+        /* 孔只比管大 4mm：原来 +2cm 是为了「好穿」，但孔径 25cm 配 18.2cm 的孔距，
+           相邻孔必然互相吞掉。按管径分开后，孔边留 1cm 宽的板筋才是标准圆孔。 */
+        hole.absarc(Math.sin(a) * rt, Math.cos(a) * rt, cfg.tubeR + 0.004, 0, Math.PI * 2, true);
         cShape.holes.push(hole);
       }
       const cGeo = new THREE.ExtrudeGeometry(cShape, { depth: 0.035, bevelEnabled: false, curveSegments: 48 });
       cGeo.rotateX(-Math.PI / 2);                    /* 竖直成型 → 水平放倒，板顶朝 +Y */
-      const cover = new THREE.Mesh(cGeo, acrylicMat);
+      /* 板色跟机器走：左机整块红、右机整块蓝（取自底座同一套配色，
+         所以顶部和底座在视觉上属于同一台机器，不会被读成另加的零件） */
+      const cover = new THREE.Mesh(cGeo, makeCoverMat(cfg.baseColor));
       cover.position.set(cx, byMin + L - 0.005, cz); /* 板底略低于管口，管穿进洞里 */
       cover.renderOrder = 7; scene.add(cover);
     }
@@ -890,7 +1518,7 @@ function buildMachine(cfg) {
     const gateY = byMin + 0.098;                     /* 托板顶面贴球底（球底 = byMin + 0.12） */
     const gateZ = cz - rt * 0.66;
     const chord = 2 * rt * Math.sin((N - 1) / 2 * step) + 0.35;
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(chord, 0.045, 0.8), acrylicMat);
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(chord, 0.045, 0.8), clearEdgeMat);
     plate.position.set(cx, gateY, gateZ);
     plate.renderOrder = 7; scene.add(plate);
     var gatePlate = plate, gateBaseZ = gateZ;
@@ -1064,6 +1692,7 @@ MACH_CFG.forEach(buildMachine);
 window.machines = machines;                       /* 调试/端到端验证钩子 */
 window.camera = camera; window.controls = controls;
 window.scene = scene; window.THREE = THREE;       /* 调试钩子：场景图/几何诊断 */
+window.renderer = renderer; window.GLASS_RIM = GLASS_RIM; window.setGlassRim = setGlassRim;  /* 调试钩子：draw call 统计 / 玻璃边缘光实时调参 */
 window.RAIL_SEGS = RAIL_SEGS; window.RAIL_R = RAIL_R; window.RAIL_OPEN_COS = RAIL_OPEN_COS;
 window.RAIL_W = RAIL_W; window.RAIL_FLOOR = RAIL_FLOOR; window.RAIL_WALLTOP = RAIL_WALLTOP;
 
@@ -1089,7 +1718,7 @@ function stepInBall(b, m, dt) {
     b.vsT += -G * b.tube.dir.y * dt;
     b.vsT *= (1 - 0.25 * dt);
     b.sT += b.vsT * dt;
-    if (b.sT <= R_BALL + 0.08) b.tube = null;      /* 滑出管底口 */
+    if (b.sT <= R_BALL + 0.08) b.tube = null;      /* 滑出管底口（落球声在闸门处统一播一次） */
     else {
       b.p.copy(b.tube.base).addScaledVector(b.tube.dir, b.sT);
       v.copy(b.tube.dir).multiplyScalar(b.vsT);
@@ -1165,7 +1794,7 @@ function stepInBall(b, m, dt) {
       b.p.copy(m.exitW);
       b.v.copy(m.exitDirW).multiplyScalar(0.8);
       m.capturedBall = b;
-      AudioFX.ballOut();                 /* 出球滑落声 */
+      AudioFX.ballOut();                 /* 出球：轻「嘟」 */
       m.holeOpen = false;               /* 真机档杆动作：出一颗立即关阀 */
       /* 已出的球留在滑道里排队（摇完后实体球排成一行 = 开奖结果） */
       return;
@@ -1407,7 +2036,7 @@ function startShow() {
   state.drawRed = []; state.drawBlue = null;
   state.currentIdx = 0;
   startBtn.disabled = true; resetBtn.disabled = true;
-  AudioFX.ensure(); AudioFX.start(); AudioFX.startStir();   /* 开奖提示音 + 启动搅拌持续音 */
+  AudioFX.ensure(); AudioFX.start();   /* 开奖提示音（同时解锁 AudioContext 并生成采样） */
   focusCamera('red');                 /* 镜头先推到左侧(红)机器 */
   beginMachine(machines[0]);
 }
@@ -1434,6 +2063,7 @@ function updateMachine(m, dt) {
     if (m.timer > 0.8 && !m.loadOpen) {
       m.loadOpen = true;                     /* 挡板已抽开：管内球沿管滑落进球壳 */
       AudioFX.gateOpen();                     /* 闸门抽开机械声 */
+      AudioFX.ballFall(1);                     /* 奖球下落：整批球落入搅拌室 */
       for (const b of m.balls) { b.state = 'in'; b.vsT = 0; b.v.set(0, 0, 0); }
     }
     /* 球全部脱离预览管并落稳（宽阈值 + 超时兜底，避免死锁） */
@@ -1670,7 +2300,7 @@ function resetAll() {
   state.running = false;
   startBtn.disabled = false; resetBtn.disabled = true;
   setPhase('点击「开始摇奖」', false);
-  AudioFX.stopStir(); AudioFX.reset();  /* 停搅拌嗡鸣 + 复位音 */
+  AudioFX.reset();                     /* 复位提示音 */
   focusCamera('overview');            /* 重置时镜头也回到全景 */
 }
 resetBtn.disabled = true;
@@ -1687,17 +2317,26 @@ function animate(now) {
     for (const m of machines) {
       if (m.phase !== 'idle') updateMachine(m, dt);
     }
-    let mg = 0; for (const m of machines) mg = Math.max(mg, m.agit);
-    AudioFX.setStir(mg);            /* 搅拌持续音音量跟随搅拌强度 */
-  } else {
-    AudioFX.setStir(0);
   }
+  /* 搅拌声跟拨盘转速走：两台机取最大，一台转就出声；全停（含重置）自然淡出。
+     每帧只做一次赋值，停转后由死区判定直接返回，不排事件。 */
+  let agitMax = 0;
+  for (const m of machines) if (m.agit > agitMax) agitMax = m.agit;
+  AudioFX.stir(agitMax);
   if (camTween.active) updateCamTween(dt); else controls.update();
   if (!GameGlobal.__ui || GameGlobal.__ui.isDrawPage()) {
     renderer.render(scene, camera);
   }
   if (GameGlobal.__ui) GameGlobal.__ui.draw(renderer);
 }
+/* 音频预热：合成数据（157ms）+ 建 AudioContext（186ms）都在首帧之后趁空闲做掉。
+   两者都不需要用户手势——ctx 在无手势时只会停在 suspended，点击时再 resume。
+   这样「开始摇奖」按下的一刻不再有半秒级的停顿。 */
+const warmAudio = () => { AudioFX.prime(); AudioFX.ensure(); };
+if (window.requestIdleCallback) requestIdleCallback(warmAudio, { timeout: 1800 });
+else setTimeout(warmAudio, 600);
+
+if (location.search.indexOf('debug') >= 0) window.__DBG = { scene, renderer, camera, THREE };
 requestAnimationFrame(animate);
 
 /* 尺寸变化统一走 Platform.onResize（Web 监听 resize + visualViewport + orientationchange；
