@@ -52,8 +52,9 @@ function load(opts) {
   const win = mkWin(opts, out);
   if (opts.ctorThrow) win.AudioContext = function () { throw new Error('webAudio unsupported'); };
   const mod = { exports: {} };
-  new Function('window', 'location', 'performance', 'module',
-    src + '\nmodule.exports = AudioFX;')(win, { search: '?debug' }, performance, mod);
+  new Function('window', 'location', 'performance', 'module', 'nowMs',
+    src + '\nmodule.exports = AudioFX;')(win, { search: '?debug' }, performance, mod,
+    () => Date.now());
   return { afx: mod.exports, win, out };
 }
 

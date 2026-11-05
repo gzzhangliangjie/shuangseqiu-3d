@@ -308,6 +308,14 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
+/* ================= 统一时间基 =================
+   只用 Date.now()：单位恒为毫秒，任何宿主都一致。
+   踩过的坑：小游戏里 performance.now() / rAF 回调时间戳的单位和时基并不保证，
+   一旦返回值被当成「秒」或「微秒」，dt 每帧都会撞上 0.05 的截断上限——
+   表现就是「整局 3 倍速」，同时帧率被算成 20 → 动态分辨率一路降到 0.6，
+   边缘全是台阶。用 Date.now() 后这些都不可能出现。 */
+const nowMs = () => Date.now();
+
 /* ================= 音效（离线程序化合成，无外部音频文件） =================
    全部在首次点击时算成采样，运行时只播 Buffer，热路径里没有任何音频节点创建。
      搅拌（4s 无缝循环）—— 拨盘推着球在玻璃腔里翻滚，整局唯一持续的声音
@@ -372,12 +380,12 @@ const AudioFX = (() => {
       master.gain.value = muted ? 0 : VOL;
       master.connect(ctx.destination);
       /* 优先 22050；个别实现不接受自定义采样率，就退回设备原生率 */
-      const _t0 = performance.now();
+      const _t0 = nowMs();
       if (!rawSet) {
         try { buildSamples(SR); }
         catch (e) { rawSet = null; buildSamples(ctx.sampleRate || 44100); }
       }
-      const _t1 = performance.now();
+      const _t1 = nowMs();
       let upOk = false;
       try { upOk = uploadSamples(); }
       catch (e) {
@@ -389,7 +397,7 @@ const AudioFX = (() => {
          清空必须放在上传成功之后：失败路径还要靠它按设备采样率重算。 */
       if (upOk) { rawSet = null; sUploaded = true; }
       if (location.search.indexOf('debug') >= 0)
-        window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(performance.now() - _t1).toFixed(1),
+        window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(nowMs() - _t1).toFixed(1),
                        primed: _t1 - _t0 < 1 };
       startStirLoop();
     }
@@ -953,6 +961,7 @@ scene.fog = new THREE.Fog(0x66788c, 42, 120);
 
 /* 环境反射（PBR 质感的关键） */
 const pmrem = new THREE.PMREMGenerator(renderer);
+let envOK = false;                 /* PMREM 是否真的建起来了，供下面调光参考 */
 /* 自制影棚环境（equirect）：上蓝墙、中亮带、下深地面 + 三块灯箱亮斑，
    让玻璃球壳/金属件反射出「真实的影棚」，而不是 RoomEnvironment 的白盒子 */
 {
@@ -976,7 +985,10 @@ const pmrem = new THREE.PMREMGenerator(renderer);
   const envTex = new THREE.CanvasTexture(envCv);
   envTex.mapping = THREE.EquirectangularReflectionMapping;
   envTex.colorSpace = THREE.SRGBColorSpace;
-  scene.environment = pmrem.fromEquirectangular(envTex).texture;
+  /* PMREM 要建 half-float 渲染目标，个别小游戏 WebGL 实现不认 →
+     以前这里一抛就整段脚本中断；现在降级成「没有环境反射」，靠灯光补回来 */
+  try { scene.environment = pmrem.fromEquirectangular(envTex).texture; envOK = true; }
+  catch (e) { envOK = false; console.warn('[env] PMREM 不可用：' + ((e && e.message) || e)); }
 }
 
 /* aspect 先占位 1，首帧前 applySize() 会按真实视口覆盖（小游戏无 innerWidth，不依赖 DOM 尺寸） */
@@ -1040,6 +1052,10 @@ const Platform = (() => {
      是移动真机最稳的自适应兜底——卡了就渲染小一点再放大，肉眼几乎无差。
    - 构图自适应 fitFov()：见下方单独说明（3D 场景的多宽高比兼容）。 */
 const MAX_DPR = Platform.isWX ? 3 : 2;
+/* 小游戏额外超采样：3D 只画在舞台那一条上（面积约全屏 1/3），像素预算有余量。
+   1.25 倍相当于在 MSAA 之外再做一次 1.25×1.25 的盒式降采样，球壳导轨这类
+   细边的台阶会明显变软；Web 是全屏渲染，不加，避免填充率直接翻倍。 */
+const SS = Platform.isWX ? 1.25 : 1;
 let resScale = 1;
 let _frames = 0, _acc = 0, _scaleCD = 0;
 
@@ -1075,7 +1091,7 @@ function stageRect() {
 function applySize() {
   const { w, h, dpr } = Platform.getViewport();
   if (!w || !h) return;
-  renderer.setPixelRatio(Math.min(dpr, MAX_DPR) * resScale);
+  renderer.setPixelRatio(Math.min(dpr, MAX_DPR) * resScale * SS);
   renderer.setSize(w, h);          /* setSize 会把 viewport 重置成全屏，下面再覆盖 */
   const st = stageRect();
   if (st) {
@@ -1102,17 +1118,19 @@ function applySize() {
   }
 }
 
-const _bootAt = performance.now();
+const _bootAt = nowMs();
 function adaptResolution(dt) {
   /* 预热期（2.5s）不评估：PMREM / 49 张纹理 / 整机建模集中在启动阶段，帧率天然偏低，
      此时降档会误伤，且回升很慢（有冷却）。用墙钟时间而非累计 dt（dt 被截断过）。 */
-  if (performance.now() - _bootAt < 2500) { _frames = 0; _acc = 0; return; }
+  if (nowMs() - _bootAt < 2500) { _frames = 0; _acc = 0; return; }
   _frames++; _acc += dt;
   if (_acc < 1) return;                         // 每约 1 秒评估一次
   const fps = _frames / _acc; _frames = 0; _acc = 0;
   if (_scaleCD > 0) { _scaleCD--; return; }     // 调档后冷却，避免来回抖动
-  if (fps < 50 && resScale > 0.6) { resScale = Math.max(0.6, resScale - 0.1); applySize(); _scaleCD = 2; }
-  else if (fps > 58 && resScale < 1) { resScale = Math.min(1, resScale + 0.1); applySize(); _scaleCD = 3; }
+  /* 下限 0.75 而不是 0.6：0.6 那一档在手机上就是「整屏糊 + 边缘全是台阶」，
+     靠降分辨率换来的帧率不值这个观感。真掉到 30fps 以下先让用户看到降档提示再说。 */
+  if (fps < 45 && resScale > 0.75) { resScale = Math.max(0.75, resScale - 0.1); applySize(); _scaleCD = 3; }
+  else if (fps > 56 && resScale < 1) { resScale = Math.min(1, resScale + 0.1); applySize(); _scaleCD = 3; }
 }
 
 applySize();   /* 首帧前先把画布铺满视口 */
@@ -1173,8 +1191,24 @@ function updateCamTween(dt) {
   }
 }
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0xc3cede, 0.34));
-const dir1 = new THREE.DirectionalLight(0xffffff, 0.95); dir1.position.set(7, 14, 9); scene.add(dir1);
+/* ================= 照度补偿（仅小游戏） =================
+   两个原因叠在一起让舞台在手机上看去偏暗：
+     1) 3D 只占竖屏中间一条，四周是 #0b131f 的深色 UI，人眼按整屏亮度适应 →
+        同样的画面会觉得暗一档；
+     2) 个别机型的 PMREM 环境反射建不起来（envOK=false），金属和玻璃球壳失去
+        漫天反射，只剩漫反射，整体再暗一层。
+   所以：小游戏抬一档曝光 + 抬一档灯光；环境降级时再补一档。Web 保持原样。 */
+const WX_BOOST = Platform.isWX ? 1.18 : 1;
+if (Platform.isWX) {
+  renderer.toneMappingExposure *= (envOK ? 1.14 : 1.34);
+  /* 天空/雾也一起提亮：舞台里最大的一块面积就是背景色，
+     背景不提亮，只提灯光会让机器比天更亮、整体反而更「脏」 */
+  scene.background.setHex(0x6b7f98);
+  scene.fog.color.setHex(0x74889e);
+}
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xc3cede, 0.34 * WX_BOOST));
+const dir1 = new THREE.DirectionalLight(0xffffff, 0.95 * WX_BOOST); dir1.position.set(7, 14, 9); scene.add(dir1);
 /* 主光投影：让机器在地面留下柔和落地影（物体不再像浮着） */
 dir1.castShadow = true;
 /* 1024：阴影相机要罩住 22×16 单位的两台机器，512 时每单位只有 23 像素，
@@ -1182,7 +1216,7 @@ dir1.castShadow = true;
 dir1.shadow.mapSize.set(1024, 1024);
 Object.assign(dir1.shadow.camera, { left: -11, right: 11, top: 13, bottom: -3, near: 2, far: 42 });
 dir1.shadow.bias = -0.0005; dir1.shadow.normalBias = 0.02;
-const dir2 = new THREE.DirectionalLight(0xdfe8ff, 0.2); dir2.position.set(-9, 7, -7); scene.add(dir2);
+const dir2 = new THREE.DirectionalLight(0xdfe8ff, 0.2 * WX_BOOST); dir2.position.set(-9, 7, -7); scene.add(dir2);
 
 
 /* 演播室地面：浅灰高光地台 + 机型圈位标线 */
@@ -2741,10 +2775,17 @@ startBtn.addEventListener('click', startShow);
 resetBtn.addEventListener('click', resetAll);
 
 /* ================= 主循环 ================= */
-let last = performance.now();
-function animate(now) {
+/* SIM_SPEED：全局速度系数，1 = 真实时间。整场（闸门、搅拌、出球）都吃这一个数，
+   想整体放慢就调小（0.8 = 慢 20%），不用改任何定时逻辑。 */
+const SIM_SPEED = 1;
+let last = nowMs();
+function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const t = nowMs();
+  const raw = (t - last) / 1000; last = t;
+  /* 同一毫秒内可能出现多帧（高刷屏 / 计时器精度 1ms）：这一帧不推进，下一帧一并补上，
+     否则会出现 0 时长的物理步。超过 50ms 的间隔按 50ms 走（切后台回来不跳帧）。 */
+  const dt = Math.min(0.05, raw > 0 ? raw : 0) * SIM_SPEED;
   adaptResolution(dt);          /* 按实时帧率动态调分辨率（移动真机自适应兜底） */
   if (state.running || machines.some(m => m.phase !== 'idle')) {
     for (const m of machines) {
