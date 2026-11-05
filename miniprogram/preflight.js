@@ -118,7 +118,11 @@ if (cfg) {
   cfg.compileType === 'game' ? ok('compileType = game') : bad('compileType = ' + cfg.compileType + '，应为 game');
   if (!cfg.appid || cfg.appid === 'touristappid') {
     wrn('appid 仍是占位 "' + cfg.appid + '"：游客模式仅能在开发者工具里跑，上传/真机预览前必须换成真实 AppID');
+  } else if (!/^wx[0-9a-f]{16}$/.test(cfg.appid)) {
+    wrn('appid "' + cfg.appid + '" 不符合 wx + 16 位十六进制的格式，确认是不是复制漏了');
   } else ok('appid = ' + cfg.appid);
+  /* 一个邮箱只能注册一个小程序；AppID 与登录账号不匹配时，开发者工具会提示"无权限" */
+  if (cfg.projectname && cfg.projectname.length > 40) wrn('projectname 过长（' + cfg.projectname.length + ' 字符）');
 }
 let gj = null;
 try { gj = JSON.parse(read(path.join(MP, 'game.json'))); }
@@ -134,8 +138,47 @@ const adapter = fs.existsSync(path.join(MP, 'adapter.js')) ? read(path.join(MP, 
 if (/__SIM_REMOTE\s*=\s*false/.test(adapter)) ok('__SIM_REMOTE = false，默认纯本地，运行期零请求');
 else wrn('__SIM_REMOTE 未明确关闭：联网需在后台配置 request 合法域名，否则真机会失败');
 
-/* ---------- 9. wx API 与最低基础库 ---------- */
-head('9. 使用的 wx API（据此设置后台「最低基础库版本」）');
+/* ---------- 9. 浏览器全局 vs adapter 垫片 ----------
+   小游戏没有 DOM/BOM。Web 源码里每用一个浏览器全局，adapter.js 就必须垫一个，
+   否则真机直接 ReferenceError（开发者工具里不一定复现得这么明显）。
+   重构时最容易漏的就是这类「Web 能跑、小游戏白屏」的差异，所以单独列一项。 */
+head('9. 浏览器全局是否都有 adapter 垫片');
+const SHIM = fs.existsSync(path.join(MP, 'adapter.js')) ? read(path.join(MP, 'adapter.js')) : '';
+const CANDIDATES = [
+  'document', 'window', 'localStorage', 'sessionStorage', 'navigator', 'location',
+  'requestAnimationFrame', 'requestIdleCallback', 'cancelAnimationFrame',
+  'devicePixelRatio', 'innerWidth', 'innerHeight', 'addEventListener', 'matchMedia',
+  'AudioContext', 'webkitAudioContext', 'OffscreenCanvas', 'createImageBitmap',
+  'URL', 'Blob', 'atob', 'btoa', 'fetch', 'Image', 'XMLHttpRequest', 'FormData',
+  'performance', 'visualViewport', 'screen', 'getComputedStyle', 'confirm', 'alert'
+];
+const unshimmed = [], guarded = [];
+for (const f of ['src/game-logic.js', 'hud.js', 'pages.js', 'src/simlog.js']) {
+  if (!fs.existsSync(path.join(MP, f))) continue;
+  /* 去注释，避免把说明文字里的 API 名误判成真实调用 */
+  const src = read(path.join(MP, f))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  for (const g of CANDIDATES) {
+    const re = new RegExp('(^|[^\\w.$])' + g + '\\b');
+    if (!re.test(src)) continue;
+    const shimmed = SHIM.includes('GameGlobal.' + g) || new RegExp('GameGlobal\\[' + JSON.stringify(g)).test(SHIM);
+    if (shimmed) continue;
+    /* 裸调用但同行做过特性检测（window.xxx）→ 已有兜底分支，不算漏垫 */
+    const lines = src.split('\n').filter(l => re.test(l));
+    const allGuarded = lines.length > 0 && lines.every(l => new RegExp('window\\.' + g + '\\b').test(l));
+    (allGuarded ? guarded : unshimmed).push(g + ' (' + f + ')');
+  }
+}
+if (guarded.length) console.log('  已做特性检测（有兜底分支）: ' + [...new Set(guarded.map(s => s.split(' (')[0]))].join(', '));
+if (!unshimmed.length) ok('其余浏览器全局均有垫片');
+else {
+  wrn('adapter 未垫片且未见保护: ' + [...new Set(unshimmed)].join(', '));
+  console.log('         → 未保护的必须在 adapter.js 补垫片，否则真机 ReferenceError');
+}
+
+/* ---------- 10. wx API 与最低基础库 ---------- */
+head('10. 使用的 wx API（据此设置后台「最低基础库版本」）');
 const apiSet = {};
 for (const f of jsFiles) {
   if (f.startsWith('libs/')) continue;
@@ -147,6 +190,49 @@ console.log('  ' + apis.join(', '));
 if (apiSet['wx.createWebAudioContext']) console.log('  注：createWebAudioContext 需基础库 ≥ 2.19.0（iOS 低版本可能只有 createInnerAudioContext）');
 if (apiSet['wx.getPerformance']) console.log('  注：getPerformance 需基础库 ≥ 2.11.0');
 ok(apis.length + ' 个 API，均为基础库 2.19+ 能力，建议后台最低基础库设为 2.19.0 及以上');
+
+/* ---------- 11. 上传压缩（包体省 40%，但工具内置压缩器不认新语法） ---------- */
+head('11. 上传压缩（minified）');
+/* 被 packOptions.ignore 排除的文件不会进包，后面的语法扫描也要跳过它们
+   （否则会把本脚本自己的正则字面量当成"危险语法"报出来） */
+const IG = ((cfg && cfg.packOptions && cfg.packOptions.ignore) || []).map(x => (x && x.value) || x);
+if (cfg) {
+  const st = cfg.setting || {};
+  st.minified ? ok('minified = true：上传时自动压缩脚本')
+              : wrn('minified = false：上传包会大 40% 左右（本项目实测 1689 → 约 1000 KB）');
+  st.uploadWithSourceMap ? ok('uploadWithSourceMap = true：压缩后报错仍能映射回源码行（.map 不计入包体）')
+                         : wrn('uploadWithSourceMap 未开：压缩后真机报错只剩混淆位置，难定位');
+  /* es6 与 enhance 必须同值，否则同一份代码在不同机器上编出不同结果 */
+  const es6 = !!st.es6, en = !!st.enhance;
+  es6 === en ? ok('es6 / enhance 同值（' + es6 + '）')
+             : bad('es6=' + es6 + ' 与 enhance=' + en + ' 不一致：两个开关是配套的，必须同值');
+  const miss = ['build.js', 'preflight.js'].filter(f => IG.indexOf(f) < 0);
+  miss.length ? wrn('packOptions.ignore 未排除: ' + miss.join(', ') + '（Node 专用代码不该上传）')
+              : ok('构建脚本已排除在上传之外');
+}
+
+/* 微信内置压缩器是老版 uglify，认不了 ES2020+ 语法。注释里的不算（压缩前先剥注释），
+   所以先剥注释再扫——否则 three.js 注释里那两个 "??" 会误报。 */
+const ES2020 = [
+  ['可选链 ?.', /[A-Za-z0-9_$)\]]\?\.[A-Za-z_$[(]/],
+  ['空值合并 ??', /\?\?[^?]/],
+  ['逻辑赋值 ||= &&= ??=', /\|\|=|&&=|\?\?=/],
+  ['数字分隔符 1_000', /\b\d+_\d+/],
+];
+const stripCmt = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+const risky = [];
+let scanned = 0;
+for (const f of jsFiles) {
+  if (IG.indexOf(f) >= 0) continue;
+  scanned++;
+  const s = stripCmt(read(path.join(MP, f)));
+  for (const [name, re] of ES2020) if (re.test(s)) risky.push(name + ' @ ' + f);
+}
+if (!risky.length) ok('包内 ' + scanned + ' 个待上传 js 均未使用压缩器不支持的语法');
+else {
+  wrn('发现压缩器可能不支持的语法：' + risky.join(' | '));
+  console.log('         → 改写法，或把 minified 设回 false（否则上传/预览报 Unexpected token）');
+}
 
 /* ---------- 汇总 ---------- */
 console.log('\n' + '='.repeat(52));

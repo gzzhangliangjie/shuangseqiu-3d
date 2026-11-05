@@ -1,13 +1,21 @@
 {
-  "appid": "touristappid",
+  "appid": "wx51cd6107e4a12e4f",
   "compileType": "game",
   "projectname": "shuangseqiu-3d-sim",
   "description": "双色球 3D 摇奖机（微信小游戏 · 自用体验版）",
   "setting": {
     "es6": false,
+    "enhance": false,
     "urlCheck": false,
-    "minified": false,
+    "minified": true,
+    "uploadWithSourceMap": true,
     "postcss": false,
     "autoAudits": false
+  },
+  "packOptions": {
+    "ignore": [
+      { "type": "file", "value": "build.js" },
+      { "type": "file", "value": "preflight.js" }
+    ]
   }
 }
