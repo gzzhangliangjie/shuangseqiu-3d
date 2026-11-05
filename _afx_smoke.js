@@ -50,6 +50,7 @@ function mkWin(opts, out) {
 function load(opts) {
   const out = [];
   const win = mkWin(opts, out);
+  if (opts.ctorThrow) win.AudioContext = function () { throw new Error('webAudio unsupported'); };
   const mod = { exports: {} };
   new Function('window', 'location', 'performance', 'module',
     src + '\nmodule.exports = AudioFX;')(win, { search: '?debug' }, performance, mod);
@@ -101,6 +102,17 @@ console.log('\n4. 极端机型：createBuffer 完全不可用');
   let threw = null; try { afx.ensure(); afx.start(); afx.stir(1); afx.stir(0); } catch (e) { threw = e; }
   ok(!threw, 'ensure / 播放 / 搅拌全部静默降级，不抛异常');
   ok(win.__AFX().uploaded === false, 'uploaded = false，但游戏照常运行');
+}
+
+console.log('\n5. 整块 WebAudio 不可用（new AudioContext 直接抛）');
+{
+  const { afx, win } = load({ ctorThrow: true });
+  let threw = null;
+  try { afx.ensure(); afx.start(); afx.place(); afx.stir(1); afx.stir(0); } catch (e) { threw = e; }
+  ok(!threw, 'ensure / 全部播放入口都不抛异常 → 不会卡死「开始摇奖」');
+  const t = performance.now(); afx.ensure(); const dt = performance.now() - t;
+  ok(dt < 5, `失败后被标记为不可用，不再重试（二次 ensure ${dt.toFixed(2)} ms）`);
+  ok(!win.__AFX().uploaded, '没有 AudioBuffer 被建出来，静音但游戏可玩');
 }
 
 console.log('\n' + (fail ? `❌ ${fail} 项未通过` : '✅ 全部通过'));

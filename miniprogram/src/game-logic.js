@@ -46,7 +46,20 @@ const AudioFX = (() => {
 
   const clamp01 = v => (v > 1 ? 1 : (v > 0 ? v : 0));
 
+  /* 初始化失败一次就永久降级静音：某些机型/基础库的 WebAudio 会在 createBuffer、
+     createGain 或 resume 上抛异常，重试只会每点一次抛一次，且异常会冒到点击回调里
+     把「开始摇奖」卡死在 disabled（表现为按钮点不动）。 */
+  let dead = false;
   function ensure() {
+    if (dead) return null;
+    try { return ensureInner(); }
+    catch (e) {
+      dead = true; ctx = null; master = null; stirGain = null; stirSrc = null;
+      console.warn('[audio] WebAudio 不可用，已降级为静音：' + (e && e.message));
+      return null;
+    }
+  }
+  function ensureInner() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
@@ -588,15 +601,18 @@ const AudioFX = (() => {
 })();
 
 /* ================= 场景基础 =================
-   渲染设置以「移动端 / 小程序」为基线（奔着上手机方向）：
-   关 MSAA、Basic 阴影、降纹理与几何精度；分辨率自适应见下方 Platform + applySize()（DPR 封顶 2 + 动态 resScale）。 */
-const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, canvas: GameGlobal.canvas });
+   渲染设置以「移动端 / 小程序」为基线：
+   - MSAA 开启：球体/圆柱的边缘是这台机器的视觉主体，关掉后阶梯感非常刺眼；
+     小游戏的 3D 只画在一条舞台上（面积约为全屏的 1/3），填充率完全吃得下。
+   - PCF 阴影：Basic 是硬边单采样，投影边缘的锯齿比模型本身更明显。
+   - 分辨率自适应见下方 Platform + applySize()（DPR 封顶 3 + 动态 resScale）。 */
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.canvas });
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 /* ACES 色调映射：高光柔和滚降，画面不再「所有东西一样亮」的死白 */
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.92;
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.BasicShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 document.body.appendChild(renderer.domElement);
 
 /* WebGL 上下文丢失（移动端切后台 / 内存紧张时常见）：three 内部会自动重建资源，
@@ -695,11 +711,15 @@ const Platform = (() => {
 })();
 
 /* ================= 分辨率适配 =================
-   - DPR 封顶 2（不再硬锁 1，避免高分屏发虚；同时规避 dpr3 手机的 4x~9x 填充率爆炸）。
+   - DPR 上限分平台：小游戏 3、Web 2。
+     小游戏以前也封顶 2，在 dpr 3 的手机上只渲染了 44% 的物理像素，整屏被放大
+     1.5 倍——这是「锯齿严重」最主要的来源（比 MSAA 影响大得多）。而小游戏的 3D
+     只画在一条舞台上（面积约为全屏的 1/3），3x 完全扛得住；Web 是全屏渲染，
+     保持 2 以避开 dpr3 手机 9 倍填充率的爆炸。
    - resScale：动态分辨率系数（1 → 0.6），animate 里按实时帧率自动降档/回升，
      是移动真机最稳的自适应兜底——卡了就渲染小一点再放大，肉眼几乎无差。
    - 构图自适应 fitFov()：见下方单独说明（3D 场景的多宽高比兼容）。 */
-const MAX_DPR = 2;
+const MAX_DPR = Platform.isWX ? 3 : 2;
 let resScale = 1;
 let _frames = 0, _acc = 0, _scaleCD = 0;
 
@@ -721,14 +741,45 @@ function fitFov(aspect) {
   return Math.min(MAX_FOV, Math.max(BASE_FOV, need));
 }
 
+/* ================= 3D 舞台（仅小游戏） =================
+   微信小游戏的 deviceOrientation 启动即定死，运行中切不了方向。所以小游戏走
+   「全局竖屏 + 3D 页一块横向取景框」：hud.js 算好舞台矩形写进 GameGlobal.__stage，
+   这里把 WebGL 的 viewport/scissor 和相机比例全按舞台算，舞台外交给 HUD 画布填底。
+   Web 端没有 __stage，走全屏分支，行为与改动前完全一致。 */
+function stageRect() {
+  if (typeof GameGlobal === 'undefined' || !GameGlobal.__stage) return null;
+  const s = GameGlobal.__stage;
+  return (s.w > 0 && s.h > 0) ? s : null;
+}
+
 function applySize() {
   const { w, h, dpr } = Platform.getViewport();
   if (!w || !h) return;
   renderer.setPixelRatio(Math.min(dpr, MAX_DPR) * resScale);
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.fov = fitFov(w / h);       /* 竖屏自动放宽视野，保证两台机器完整入画 */
+  renderer.setSize(w, h);          /* setSize 会把 viewport 重置成全屏，下面再覆盖 */
+  const st = stageRect();
+  if (st) {
+    /* three 的 setViewport / setScissor 收的是**逻辑像素**（内部再乘 pixelRatio），
+       这里不要再乘一次。WebGL 原点在左下，UI 坐标原点在左上，y 要翻。 */
+    const vx = Math.round(st.x);
+    const vy = Math.round(h - st.y - st.h);
+    const vw = Math.max(1, Math.round(st.w));
+    const vh = Math.max(1, Math.round(st.h));
+    renderer.setViewport(vx, vy, vw, vh);
+    renderer.setScissor(vx, vy, vw, vh);
+    camera.aspect = st.w / st.h;
+  } else {
+    renderer.setScissorTest(false);
+    camera.aspect = w / h;
+  }
+  camera.fov = fitFov(camera.aspect);   /* 竖屏自动放宽视野，保证两台机器完整入画 */
   camera.updateProjectionMatrix();
+  /* HUD 每帧要临时铺满全屏，得知道渲染完恢复哪个视口（逻辑像素） */
+  if (typeof GameGlobal !== 'undefined') {
+    GameGlobal.__stageVp = st
+      ? { x: st.x, y: h - st.y - st.h, w: st.w, h: st.h }
+      : { x: 0, y: 0, w: w, h: h };
+  }
 }
 
 const _bootAt = performance.now();
@@ -745,6 +796,8 @@ function adaptResolution(dt) {
 }
 
 applySize();   /* 首帧前先把画布铺满视口 */
+/* 小游戏：HUD 换页重算舞台后需要重设 viewport（__applySize 的壳在 hud.js） */
+if (typeof GameGlobal !== 'undefined') GameGlobal.__applySizeImpl = applySize;
 
 /* 注：移动基线不启用 Bloom 后处理（EffCCComposer 全屏多 pass 在手机上过贵），
    直接 renderer.render，色调映射 + sRGB 编码由 renderer 自身完成。 */
@@ -804,7 +857,9 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0xc3cede, 0.34));
 const dir1 = new THREE.DirectionalLight(0xffffff, 0.95); dir1.position.set(7, 14, 9); scene.add(dir1);
 /* 主光投影：让机器在地面留下柔和落地影（物体不再像浮着） */
 dir1.castShadow = true;
-dir1.shadow.mapSize.set(512, 512);
+/* 1024：阴影相机要罩住 22×16 单位的两台机器，512 时每单位只有 23 像素，
+   投影边缘的锯齿比模型本身更显眼；舞台上 3D 面积小，这一档吃得下 */
+dir1.shadow.mapSize.set(1024, 1024);
 Object.assign(dir1.shadow.camera, { left: -11, right: 11, top: 13, bottom: -3, near: 2, far: 42 });
 dir1.shadow.bias = -0.0005; dir1.shadow.normalBias = 0.02;
 const dir2 = new THREE.DirectionalLight(0xdfe8ff, 0.2); dir2.position.set(-9, 7, -7); scene.add(dir2);
@@ -2039,15 +2094,44 @@ const state = { running: false, currentIdx: 0, drawRed: [], drawBlue: null };
 const startBtn = document.getElementById('startBtn');
 const resetBtn = document.getElementById('resetBtn');
 
+/* 画面上的一句话提示：小游戏里没有 console 面板也没有 window.onerror（adapter 把
+   addEventListener 垫成空函数），出错时必须写到 HUD 上，否则用户只看到「点了没反应」。 */
+function say(t) {
+  try {
+    setPhase(t);
+    const pe = document.getElementById('phase');
+    if (pe && pe.classList) pe.classList.add('active');
+    if (say._t) clearTimeout(say._t);
+    say._t = setTimeout(function () {
+      if (pe && pe.classList) pe.classList.remove('active');
+    }, 2600);
+  } catch (e) {}
+}
+
 function startShow() {
   if (state.running) return;
   state.running = true;
   state.drawRed = []; state.drawBlue = null;
   state.currentIdx = 0;
   startBtn.disabled = true; resetBtn.disabled = true;
-  AudioFX.ensure(); AudioFX.start();   /* 开奖提示音（同时解锁 AudioContext 并生成采样） */
-  focusCamera('red');                 /* 镜头先推到左侧(红)机器 */
-  beginMachine(machines[0]);
+  /* 小游戏里改 .disabled 不会自动触发 HUD 重绘，不主动刷一下按钮看起来还是「亮的」，
+     用户会以为还能点（实到不了回调）。 */
+  if (window.__hud) window.__hud.markDirty();
+  say('启动中…');
+  /* 音频是可选增强，绝不能挡住摇奖：以前 ensure() 一抛异常就停在 disabled，
+     表现是「进入 3D 后开始摇奖按钮点不动」，且再也恢复不了。 */
+  try { AudioFX.ensure(); AudioFX.start(); }   /* 开奖提示音（同时解锁 AudioContext 并生成采样） */
+  catch (e) { console.warn('[start] 音频跳过：' + (e && e.message)); say('音频不可用 · 已静音'); }
+  try {
+    focusCamera('red');                 /* 镜头先推到左侧(红)机器 */
+    beginMachine(machines[0]);
+  } catch (e) {
+    /* 真的启动失败：把按钮还回去，并把原因写到画面上，别让用户只看到「点不动」 */
+    state.running = false;
+    startBtn.disabled = false; resetBtn.disabled = true;
+    say('启动失败：' + ((e && e.message) || e));
+    console.error('[start]', e);
+  }
 }
 function beginMachine(m) {
   m.phase = 'loading'; m.timer = 0; m.doneHandled = false;
@@ -2335,10 +2419,15 @@ function animate(now) {
   for (const m of machines) if (m.agit > agitMax) agitMax = m.agit;
   AudioFX.stir(agitMax);
   if (camTween.active) updateCamTween(dt); else controls.update();
+  /* scissor 只在 3D 这一遍打开：连清屏也被限制在舞台内，舞台外保留 HUD 画的底色。
+     HUD 紧接着在全屏 viewport 上单独渲染（见 hud.js 的 draw），不受影响。 */
+  const _st = stageRect();
+  if (_st) renderer.setScissorTest(true);
   if (!GameGlobal.__ui || GameGlobal.__ui.isDrawPage()) {
     renderer.render(scene, camera);
   }
   if (GameGlobal.__ui) GameGlobal.__ui.draw(renderer);
+  if (_st) renderer.setScissorTest(false);
 }
 /* 音频预热：合成数据（157ms）+ 建 AudioContext（186ms）都在首帧之后趁空闲做掉。
    两者都不需要用户手势——ctx 在无手势时只会停在 suspended，点击时再 resume。

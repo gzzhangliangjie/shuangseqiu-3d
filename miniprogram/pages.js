@@ -54,6 +54,9 @@
     scrollY = 0; status = '';
     if (page === 'tool') { syncMatch(); refreshLog(); }
     dirty();
+    /* 3D 页和 UI 页共用一块画布，但 3D 只在「舞台」视口里渲染：
+       切页后重设一次 viewport，避免上一页残留下来的全屏/舞台尺寸。 */
+    if (GameGlobal.__applySize) GameGlobal.__applySize();
   }
   function close() { open('draw'); }
   function isDrawPage() { return current === 'draw'; }
@@ -425,10 +428,20 @@
   }
 
   /* ================= 页面框架 ================= */
-  function renderPage(g, W, H, M) {
+  /* 内容区：横屏 / 刘海屏时收进安全区，并在宽屏上居中收窄（≤620），
+     否则 844 px 的横向屏幕会把卡片和文字拉得很散。OX 同时用于触摸坐标反算。 */
+  let OX = 0;
+  function renderPage(g, W0, H, M) {
     regions = [];
     /* 不透明背景：盖住上一帧 3D 画面（非 draw 页不渲染 3D） */
-    g.fillStyle = C.bg; g.fillRect(0, 0, W, H);
+    g.fillStyle = C.bg; g.fillRect(0, 0, W0, H);
+
+    const sl = M.safeL || 0, sr = M.safeR || 0;
+    const avail = Math.max(240, W0 - sl - sr);
+    const W = Math.min(avail, 620);
+    OX = sl + (avail - W) / 2;
+    g.save();
+    g.translate(OX, 0);
 
     const x = M.pad, w = W - M.pad * 2;
     const y0 = M.safeTop + 8;
@@ -456,6 +469,7 @@
       rr(g, x, bottom - 30, w, 28, 8, 'rgba(28,68,128,.9)');
       txt(g, status, x + w / 2, bottom - 16, 11, '#fff', 'center');
     }
+    g.restore();
   }
 
   /* 三个 tab 统一做「裁剪 + 滚动」包装，页面函数只管按内容坐标画 */
@@ -477,6 +491,7 @@
       if (type === 'start') return hud.hitTest(x, y);
       return false;
     }
+    x -= OX;                     /* 屏幕坐标 → 内容坐标（与 renderPage 的平移对称） */
     if (type === 'start') {
       startY = y; moved = false; startRegion = null;
       for (let i = regions.length - 1; i >= 0; i--) {

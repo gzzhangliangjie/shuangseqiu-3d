@@ -98,10 +98,10 @@ addon('environments/RoomEnvironment.js', 'RoomEnvironment.js', 'RoomEnvironment'
   must(!/^\s*import\s/m.test(s), 'module 主体仍有残留 import');
 
   /* 注入 1：小游戏必须显式传上屏 canvas */
-  const rendererLine = 'const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });';
+  const rendererLine = 'const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });';
   must(s.includes(rendererLine), 'WebGLRenderer 构造语句未匹配（index.html 改过？同步 build.js）');
   s = s.replace(rendererLine,
-    'const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, canvas: GameGlobal.canvas });');
+    'const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.canvas });');
 
   /* 注入 2：3D 只在开奖页渲染（选号/记录页是全屏 UI，跳过 3D 省 GPU），
      之后统一交给 __ui 叠加 UI 层。按「行」匹配，避免 CRLF 对不上。 */

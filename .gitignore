@@ -18,6 +18,7 @@ _vendor/
 _ref_tmp/
 .edge_tmp/
 e2e_*.png
+qr-preview.png
 _probe_*.html
 _*.png
 _probe_*.html

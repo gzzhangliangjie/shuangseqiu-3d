@@ -128,7 +128,10 @@ let gj = null;
 try { gj = JSON.parse(read(path.join(MP, 'game.json'))); }
 catch (e) { bad('game.json 不是合法 JSON'); }
 if (gj) {
-  gj.deviceOrientation === 'portrait' ? ok('竖屏 portrait') : wrn('deviceOrientation = ' + gj.deviceOrientation);
+  const ORI = ['portrait', 'landscape', 'landscapeLeft', 'landscapeRight'];
+  ORI.indexOf(gj.deviceOrientation) >= 0
+    ? ok('deviceOrientation = ' + gj.deviceOrientation)
+    : bad('deviceOrientation 非法: ' + gj.deviceOrientation + '（只能是 ' + ORI.join(' / ') + '）');
   if (gj.subpackages) wrn('配置了分包，注意单个独立分包 ≤ 4MB');
 }
 
