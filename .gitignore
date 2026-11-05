@@ -40,3 +40,8 @@ _mixkit_*.html
 _sfx_*.mp3
 _sfx_*.json
 sim3d_results.json
+
+# 音频离线渲染中间产物（_audio_render.js 可随时重生成）
+_*.raw
+_sr.txt
+搅拌声试听.wav
