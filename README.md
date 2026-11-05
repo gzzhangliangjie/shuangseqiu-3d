@@ -186,7 +186,7 @@ UI 层不依赖 DOM：伪 DOM 元素的 `textContent` / `className` / `disabled`
   听感是一层永不间断的「沙沙」——球本身不发声，响的只有撞击，连续性应由密度给出。
   常驻音频节点 3 个（master + 搅拌的 1 源 + 1 增益），搅拌源一直挂着、只用增益门控，
   摇奖过程中不新建节点；事件声每次 1 源 + 1 增益，播完自动回收。
-  采样 22.05kHz、合计约 0.67MB；总音量 `VOL` 压低，只作背景提示。
+  采样 22.05kHz、8 段合计 8.31s / 716KB；总音量 `VOL` 压低，只作背景提示。
   音频**预热**：合成只算出 Float32Array（不碰 AudioContext），与 `new AudioContext()`
   （约 186ms，音频线程初始化）一起放在首帧之后 `requestIdleCallback` 里做掉。
   点击「开始摇奖」时只剩 createBuffer + 拷贝（实测 0.4ms），按下的一刻没有停顿。
