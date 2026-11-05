@@ -186,6 +186,25 @@ node miniprogram/preflight.js
 > 灯光 ×1.18、天空/雾色一并提亮。Web 端完全不受影响（`WX_BOOST = 1`）。
 > 觉得偏亮/偏暗就调这一个数（搜 `WX_BOOST`）。
 
+> **背景墙变黑 = 纹理被判无效（踩过两次才定位）**
+> 演播室背景墙的贴图是 2048×295（**NPOT**），原来靠 `wallTex.repeat.x = -1` 翻转 UV
+> 来抵消 BackSide 的镜像。`REPEAT` 缠绕要求 2 的幂尺寸，WebGL1 上 NPOT + REPEAT 的贴图
+> 是「不完整」的，采样全给 0 —— 小游戏里整面墙**纯黑**，墙上的「福彩开奖」自然也没了。
+> Web 是 WebGL2、NPOT + REPEAT 合法，所以浏览器一直正常，只有真机炸。
+> 现在改成**在 2D 画布上左右镜像绘制**，纹理用 `ClampToEdge + 无 mipmap + LinearFilter`
+> （和一直正常工作的 HUD 贴图同一套参数）。
+> 排查口径：**小游戏里某块贴图纯黑/消失，先看它是不是 NPOT 且开了 REPEAT 或 mipmap。**
+> 另外中文 `font` 一律写 `sans-serif`：`"Microsoft YaHei", Arial` 在安卓上缺字时，
+> canvas 可能直接不画 CJK 字形（Web 会走系统回退，小游戏不走）。
+
+> **开奖页 HUD = Web 版的镜像**
+> 小游戏没有 DOM，Web 上的 `#controls`（4 个：开始摇奖 / 重置 / 模拟结果 / 返回选号）
+> 与 `#simPrompt`（「已加入模拟结果」）都要在 HUD 画布上自己画：
+> 按钮是 `hud.js` 的 `buttons[]`（4 个等分，`bGap = 7`），
+> 提示是 `__hud.toast('已记入开奖记录 · 共 N 期')`，由主逻辑在 `SimLog.onDrawComplete`
+> 之后调用，2.2 秒自动消失（过期判定在 `draw()` 里，`drawHUD()` 内设 dirty 会被清掉）。
+> 新增按钮记得同步 `hitTest` 与 `_hud_tap_smoke.js` 的几何断言。
+
 
 > **音频兜底**：小游戏里 `AudioContext` 走 `wx.createWebAudioContext()`（`adapter.js` 第 246 行）。
 > 如果真机出现「点开始摇奖无反应」或控制台报音频错误，是 `game-logic.js` 的 `AudioFX.ensure()` 在 `buildSamples()` 抛异常（`createBuffer` 采样率不被支持）。

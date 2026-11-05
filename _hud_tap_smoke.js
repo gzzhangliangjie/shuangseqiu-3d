@@ -99,21 +99,25 @@ check('isDrawPage = true', ui.isDrawPage() === true);
 console.log('\n3. 按钮布局');
 console.log('     M =', JSON.stringify({ W: M.W, H: M.H, btnY: M.btnY, btnH: M.btnH, bw: M.bw, pad: M.pad, safeBottom: M.safeBottom }));
 check('btnY + btnH 在屏内', M.btnY + M.btnH <= M.H - M.safeBottom + 1, (M.btnY + M.btnH) + ' vs ' + (M.H - M.safeBottom));
-check('三个按钮等宽且够点', M.bw >= 100 && Math.abs(M.bw * 3 + M.bGap * 2 - (M.W - M.pad * 2)) < 1, 'bw=' + M.bw.toFixed(1));
+check('四个按钮等宽且够点', M.bw >= 76 && Math.abs(M.bw * 4 + M.bGap * 3 - (M.W - M.pad * 2)) < 1, 'bw=' + M.bw.toFixed(1));
 check('按钮互不重叠', M.pad + M.bw <= M.pad + M.bw + M.bGap, '');
 
 console.log('\n3.5 竖屏舞台（3D 横向取景框）几何');
 const ST = M.stage;
 console.log('     STAGE =', JSON.stringify(ST), ' slotY =', Math.round(M.slotY), ' stageBottom =', Math.round(M.stageBottom));
-check('竖屏才开舞台', !!ST && ST.w > 0, ST && ST.w);
-check('舞台铺满可用宽度', ST && Math.abs(ST.w - (M.W - M.safeL - M.safeR)) < 1, ST && ST.w);
-check('舞台高 ≥ 200（够看横向场景）', ST && ST.h >= 200, ST && ST.h);
-check('舞台是横向比例（w/h > 1.2）', ST && ST.w / ST.h > 1.2, ST && (ST.w / ST.h).toFixed(2));
-check('舞台顶在标题之下', ST && ST.y >= M.safeTop + 40, ST && ST.y);
-check('舞台底 + 提示条 不压号码', M.stageBottom + 38 <= M.slotY - M.slotR,
-  (M.stageBottom + 38) + ' vs ' + (M.slotY - M.slotR));
-check('号码槽整排在屏内', M.slotY - M.slotR >= 0 && M.slotY + M.slotR <= M.H, Math.round(M.slotY));
-check('号码 + 相位 不压按钮', M.slotY + M.slotR + 30 <= M.btnY, (M.slotY + M.slotR + 30) + ' vs ' + M.btnY);
+/* 舞台是竖屏专属方案；横屏/平板走全屏 3D，这些断言不适用 */
+if (!LAND) {
+  check('竖屏才开舞台', !!ST && ST.w > 0, ST && ST.w);
+  check('舞台铺满可用宽度', ST && Math.abs(ST.w - (M.W - M.safeL - M.safeR)) < 1, ST && ST.w);
+  check('舞台高 ≥ 200（够看横向场景）', ST && ST.h >= 200, ST && ST.h);
+  check('舞台是横向比例（w/h > 1.2）', ST && ST.w / ST.h > 1.2, ST && (ST.w / ST.h).toFixed(2));
+  check('舞台顶在标题之下', ST && ST.y >= M.safeTop + 40, ST && ST.y);
+  check('舞台底 + 提示条 不压号码', M.stageBottom + 38 <= M.slotY - M.slotR,
+    (M.stageBottom + 38) + ' vs ' + (M.slotY - M.slotR));
+  check('号码槽整排在屏内', M.slotY - M.slotR >= 0 && M.slotY + M.slotR <= M.H, Math.round(M.slotY));
+  check('号码 + 相位 不压按钮', M.slotY + M.slotR + 30 <= M.btnY, (M.slotY + M.slotR + 30) + ' vs ' + M.btnY);
+
+}
 
 console.log('\n4. 点「开始摇奖」中心 → 是否触发 click');
 let clicked = 0;
@@ -129,9 +133,13 @@ const blank = ui.touch('start', 10, M.slotY - 60);
 check('空白处不消费', blank === false, 'return=' + blank);
 
 console.log('\n6. 「返回选号」按钮 → 回 tool');
-const px = M.pad + (M.bw + M.bGap) * 2 + M.bw / 2;
+const lx = M.pad + (M.bw + M.bGap) * 2 + M.bw / 2;
+ui.touch('start', lx, cy);
+check('「记录」按钮进记录页', ui.current() === 'log', ui.current());
+ui.open('draw');
+const px = M.pad + (M.bw + M.bGap) * 3 + M.bw / 2;
 ui.touch('start', px, cy);
-check('回到选号页', ui.current() === 'tool', ui.current());
+check('「返回选号」按钮回 tool', ui.current() === 'tool', ui.current());
 
 console.log('\n7. 按钮 disabled 时不触发（真机滚动中表现）');
 ui.open('draw');
@@ -144,8 +152,8 @@ byId('startBtn').disabled = false;
 
 console.log('\n8. 安全区与页面坐标映射');
 const sl = M.safeL || 0, sr = M.safeR || 0;
-check('按钮行左右都收进安全区', M.pad >= sl && (M.pad + 3 * M.bw + 2 * M.bGap) <= M.W - sr,
-  'pad=' + M.pad + ' right=' + (M.pad + 3 * M.bw + 2 * M.bGap) + ' / W-sr=' + (M.W - sr));
+check('按钮行左右都收进安全区', M.pad >= sl && (M.pad + 4 * M.bw + 3 * M.bGap) <= M.W - sr,
+  'pad=' + M.pad + ' right=' + (M.pad + 4 * M.bw + 3 * M.bGap) + ' / W-sr=' + (M.W - sr));
 
 let renderThrew = null;
 try {
@@ -153,6 +161,29 @@ try {
   ui.renderPage(makeCtx(), M.W, M.H, M);
 } catch (e) { renderThrew = e; }
 check('选号页能画出来', !renderThrew, renderThrew && renderThrew.message);
+
+console.log('\n9. toast（「已记入开奖记录」提示）');
+const stubRenderer = {
+  autoClear: true,
+  getScissorTest() { return false; },
+  getViewport(v) { v.set(0, 0, 1, 1); },
+  getScissor(v) { v.set(0, 0, 1, 1); },
+  setViewport() {}, setScissor() {}, setScissorTest() {}, render() {}
+};
+let toastThrew = null;
+try {
+  ui.open('draw');
+  hud.toast('已记入开奖记录 · 共 3 期');
+  hud.draw(stubRenderer);
+} catch (e) { toastThrew = e; }
+check('toast 绘制不抛异常', !toastThrew, toastThrew && toastThrew.message);
+
+let expireThrew = null;
+try {
+  hud.toast('过期提示', -1);            /* until 已在过去 → 下一帧应清掉并重绘 */
+  hud.draw(stubRenderer);
+} catch (e) { expireThrew = e; }
+check('toast 过期清理不抛异常', !expireThrew, expireThrew && expireThrew.message);
 
 /* 页面内容被居中收窄平移过，触摸坐标要能反算回内容坐标 */
 ui.open('tool');

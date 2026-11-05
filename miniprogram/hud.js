@@ -48,6 +48,13 @@
 
   let W = 0, H = 0, S = 1, safeTop = 0, safeBottom = 0, safeL = 0, safeR = 0;
   let dirty = true;
+  /* 轻提示（toast）：摇完一期入列后弹一句「已记入开奖记录」——
+     Web 版这块是 DOM 的 #simPrompt，小游戏没有 DOM，画在 HUD 上 */
+  let toastMsg = null;                /* { text, until } */
+  function toast(text, ms) {
+    toastMsg = { text: String(text == null ? '' : text), until: Date.now() + (ms || 2200) };
+    dirty = true;
+  }
   const buttons = [];
   const M = {};                       // 布局参数，供 pages.js 复用
   /* 3D 舞台：竖屏里的一条横向取景框。w=0 表示不分舞台（横屏/平板仍全屏渲染） */
@@ -93,13 +100,14 @@
       const btnH0 = 42;
       const btnY0 = H - bottom0 - btnH0;
       const slotY0 = btnY0 - 20 - slotR0;
-      const pad0 = 16 + Math.max(safeL, safeR), bGap0 = 8;
-      const bw0 = (W - pad0 * 2 - bGap0 * 2) / 3;
+      const pad0 = 16 + Math.max(safeL, safeR), bGap0 = 7;
+      const bw0 = (W - pad0 * 2 - bGap0 * 3) / 4;
 
       buttons.length = 0;
       buttons.push({ id: 'start', x: pad0, y: btnY0, w: bw0, h: btnH0, el: startBtn, label: '开始摇奖' });
-      buttons.push({ id: 'reset', x: pad0 + bw0 + bGap0, y: btnY0, w: bw0, h: btnH0, el: resetBtn, label: '重置' });
-      buttons.push({ id: 'picker', x: pad0 + (bw0 + bGap0) * 2, y: btnY0, w: bw0, h: btnH0, el: null, label: '返回选号' });
+      buttons.push({ id: 'reset', x: pad0 + (bw0 + bGap0), y: btnY0, w: bw0, h: btnH0, el: resetBtn, label: '重置' });
+      buttons.push({ id: 'log', x: pad0 + (bw0 + bGap0) * 2, y: btnY0, w: bw0, h: btnH0, el: null, label: '记录' });
+      buttons.push({ id: 'picker', x: pad0 + (bw0 + bGap0) * 3, y: btnY0, w: bw0, h: btnH0, el: null, label: '返回选号' });
 
       Object.assign(M, {
         W, H, S, safeTop, safeBottom, safeL, safeR,
@@ -128,13 +136,14 @@
     /* 号码在舞台与按钮之间取 45% 位置：太靠上贴着舞台，太靠下离按钮太近 */
     const slotY = stageB + (btnY - stageB) * 0.45;
 
-    const pad = 16, bGap = 8;
-    const bw = (W - pad * 2 - bGap * 2) / 3;
+    const pad = 16, bGap = 7;
+    const bw = (W - pad * 2 - bGap * 3) / 4;
 
     buttons.length = 0;
     buttons.push({ id: 'start', x: pad, y: btnY, w: bw, h: btnH, el: startBtn, label: '开始摇奖' });
-    buttons.push({ id: 'reset', x: pad + bw + bGap, y: btnY, w: bw, h: btnH, el: resetBtn, label: '重置' });
-    buttons.push({ id: 'picker', x: pad + (bw + bGap) * 2, y: btnY, w: bw, h: btnH, el: null, label: '返回选号' });
+    buttons.push({ id: 'reset', x: pad + (bw + bGap), y: btnY, w: bw, h: btnH, el: resetBtn, label: '重置' });
+    buttons.push({ id: 'log', x: pad + (bw + bGap) * 2, y: btnY, w: bw, h: btnH, el: null, label: '记录' });
+    buttons.push({ id: 'picker', x: pad + (bw + bGap) * 3, y: btnY, w: bw, h: btnH, el: null, label: '返回选号' });
 
     Object.assign(M, {
       W, H, S, safeTop, safeBottom, safeL, safeR,
@@ -237,7 +246,8 @@
       roundRect(b.x, b.y, b.w, b.h, 12);
       const dis = b.el && b.el.disabled;
       ctx.fillStyle = dis ? 'rgba(120,140,168,.28)' :
-        (b.id === 'picker' ? 'rgba(58,82,116,.9)' : 'rgba(38,84,150,.95)');
+        (b.id === 'picker' ? 'rgba(58,82,116,.9)' :
+          b.id === 'log' ? 'rgba(46,74,110,.9)' : 'rgba(38,84,150,.95)');
       ctx.fill();
       ctx.fillStyle = dis ? 'rgba(255,255,255,.45)' : '#ffffff';
       ctx.font = 'bold 15px sans-serif';
@@ -245,6 +255,25 @@
       ctx.textBaseline = 'middle';
       ctx.fillText((b.id === 'start' && mt && mt.pending) ? '摇这一注' : b.label,
         b.x + b.w / 2, b.y + b.h / 2 + 1);
+    }
+
+    /* 轻提示：压在按钮行上方，2.2 秒后自己消失（过期判定在 draw 里做，那才会重绘） */
+    if (toastMsg) {
+      ctx.font = '13px sans-serif';
+      const tw = ctx.measureText(toastMsg.text).width + 36;
+      const th = 32, tx0 = (W - tw) / 2, ty0 = M.btnY - th - 14;
+      roundRect(tx0, ty0, tw, th, th / 2);
+      ctx.fillStyle = 'rgba(20,34,52,.92)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(150,200,160,.55)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#8fe0a8';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('✓', tx0 + 13, ty0 + th / 2 + 1);
+      ctx.fillStyle = '#eef6ff';
+      ctx.fillText(toastMsg.text, tx0 + 28, ty0 + th / 2 + 1);
     }
   }
 
@@ -265,6 +294,8 @@
   const _sc = new THREE.Vector4();
 
   function draw(renderer) {
+    /* toast 过期要在这里判：drawHUD 里设 dirty 会被 redraw() 末尾清掉 */
+    if (toastMsg && Date.now() > toastMsg.until) { toastMsg = null; dirty = true; }
     if (dirty) redraw();
     const prevClear = renderer.autoClear;
     const prevTest = renderer.getScissorTest();
@@ -287,6 +318,9 @@
       if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) {
         if (b.id === 'picker') {
           if (GameGlobal.__ui) GameGlobal.__ui.open('tool');
+        } else if (b.id === 'log') {
+          /* 记录页：和「返回选号」对称的出口，摇完一期直接看结果/形态评估 */
+          if (GameGlobal.__ui) GameGlobal.__ui.open('log');
         } else if (!b.el.disabled) {
           /* 按钮回调里抛异常不能打断触摸链：否则一次异常之后
              整个 HUD 都像「点不动」，且没有任何提示 */
@@ -314,6 +348,7 @@
     draw,
     hitTest,
     relayout,
+    toast,
     surface: { cv, ctx, tex, scene, camera },
     metrics: M
   };

@@ -893,10 +893,12 @@ function updateCamTween(dt) {
         同样的画面会觉得暗一档；
      2) 个别机型的 PMREM 环境反射建不起来（envOK=false），金属和玻璃球壳失去
         漫天反射，只剩漫反射，整体再暗一层。
-   所以：小游戏抬一档曝光 + 抬一档灯光；环境降级时再补一档。Web 保持原样。 */
-const WX_BOOST = Platform.isWX ? 1.18 : 1;
+   所以：小游戏抬一档曝光 + 抬一档灯光；环境降级时再补一档。Web 保持原样。
+   注意：真正让画面黑的是背景墙贴图被 GPU 判为无效（见上方 wallTex 注释），
+   那面墙一黑，整个背景就是黑的；所以这里只做小幅补偿，别指望用它顶替修复。 */
+const WX_BOOST = Platform.isWX ? 1.10 : 1;
 if (Platform.isWX) {
-  renderer.toneMappingExposure *= (envOK ? 1.14 : 1.34);
+  renderer.toneMappingExposure *= (envOK ? 1.06 : 1.20);
   /* 天空/雾也一起提亮：舞台里最大的一块面积就是背景色，
      背景不提亮，只提灯光会让机器比天更亮、整体反而更「脏」 */
   scene.background.setHex(0x6b7f98);
@@ -980,6 +982,12 @@ floorRing(3.55, 3.64, 0, 0, 0xc3ccd9);      /* 台中共用大圆 */
   cv.width = 2048; cv.height = Math.round(600 * WALL_S);
   const c = cv.getContext('2d');
   c.scale(WALL_S, WALL_S);
+  /* 水平镜像：弧面用 BackSide 从内看会把纹理左右翻，这里先翻一次抵消。
+     以前是靠 `wallTex.repeat.x = -1` 翻 UV —— 那要求 REPEAT 缠绕，而这纹理是
+     NPOT（2048×295），WebGL1 里 NPOT + REPEAT 的贴图是「不完整」的，
+     采样结果全黑：小游戏里整面背景墙直接变黑，墙上的「福彩开奖」四个字也没了。
+     （Web 是 WebGL2，NPOT + REPEAT 合法，所以浏览器里一直正常，只在小游戏上炸。） */
+  c.translate(4160, 0); c.scale(-1, 1);
   const g = c.createLinearGradient(0, 0, 0, 600);
   g.addColorStop(0, '#3a5a80'); g.addColorStop(0.55, '#5e84ab'); g.addColorStop(1, '#9fb6cf');
   c.fillStyle = g; c.fillRect(0, 0, 4160, 600);
@@ -998,7 +1006,7 @@ floorRing(3.55, 3.64, 0, 0, 0xc3ccd9);      /* 台中共用大圆 */
   c.fillStyle = glow; c.fillRect(0, 0, 4160, 600);
   /* 「福彩开奖」立体字：暗蓝厚度层 → 白描边 → 蓝渐变面（字缩小上移，不压机器） */
   c.textAlign = 'center'; c.textBaseline = 'middle';
-  c.font = 'bold 110px "Microsoft YaHei", Arial';
+  c.font = 'bold 110px sans-serif';
   c.fillStyle = '#2a5f96';
   c.fillText('福彩开奖', 2089, 112);                    /* 厚度/投影层 */
   c.lineWidth = 12; c.strokeStyle = '#ffffff';
@@ -1008,8 +1016,10 @@ floorRing(3.55, 3.64, 0, 0, 0xc3ccd9);      /* 台中共用大圆 */
   c.fillStyle = tg;
   c.fillText('福彩开奖', 2080, 106);                    /* 蓝渐变主面 */
   const wallTex = new THREE.CanvasTexture(cv); wallTex.colorSpace = THREE.SRGBColorSpace;
-  /* 弧面用 BackSide 从内看会镜像 → 水平翻转 UV 把字正过来 */
-  wallTex.wrapS = THREE.RepeatWrapping; wallTex.repeat.x = -1;
+  /* 不再用 repeat 翻 UV（见上方镜像绘制）。纹理参数取「谁都不会失败」的组合：
+     ClampToEdge + 无 mipmap + 线性过滤 —— 和小游戏里已经工作正常的 HUD 贴图一致。 */
+  wallTex.generateMipmaps = false;
+  wallTex.minFilter = THREE.LinearFilter;
   const wall = new THREE.Mesh(
     new THREE.CylinderGeometry(26, 26, 15, 96, 1, true, Math.PI - 2.0, 4.0),
     new THREE.MeshBasicMaterial({ map: wallTex, side: THREE.BackSide, fog: false })
@@ -2300,6 +2310,13 @@ function updateMachine(m, dt) {
             /* 选号页「带这注去 3D 摇奖」会把注挂在 __PENDING_PICK 上，
                一起入列，回到选号页即可结算对照（Web 端该变量恒为 undefined → null） */
             window.SimLog.onDrawComplete(red, blue, window.__PENDING_PICK || null);
+            /* Web 版由 SimLog 自己的 #simPrompt 弹「已加入模拟结果」；
+               小游戏没有 DOM，改由 HUD 的 toast 顶这一句，否则记录悄悄写进去、
+               用户完全不知道存了没存。 */
+            if (window.__hud && window.__hud.toast && window.SimLog.snapshot) {
+              const _n = window.SimLog.snapshot().length;
+              window.__hud.toast('已记入开奖记录 · 共 ' + _n + ' 期');
+            }
           }
         }, 2500);
       }
