@@ -1,8 +1,8 @@
 # 微信发布流程文档 · 双色球 3D 摇奖机
 
 > 适用范围：`miniprogram/`（微信**小游戏**工程，`compileType = game`）
-> 更新日期：2026-11-05
-> 依据：微信开放社区《小游戏备案 & 发布流程指引》《版本审核》《代码包》《微信小程序平台运营规范》
+> 更新日期：2026-11-05（本轮新增 §3.5 包体压缩、§3.6 版本机制，数据均为本机实测）
+> 依据：微信开放社区《小游戏备案 & 发布流程指引》《版本审核》《代码包》《分包加载》《Source Map》《微信小程序平台运营规范》
 
 ---
 
@@ -15,12 +15,13 @@
 
 | 步骤 | 状态 |
 |---|---|
-| 工程结构 / 体积 / 语法 / 动态代码自检 | ✅ 通过（`node miniprogram/preflight.js`） |
+| 工程结构 / 体积 / 语法 / 动态代码自检 | ✅ 通过（`node miniprogram/preflight.js`，11 项 0 失败 0 警告） |
 | 小游戏产物与 Web 真源同步 | ✅ 已重建（此前 `game-logic.js`、`simlog.js` 落后于 `index.html`） |
 | `project.config.json` 描述改为自用体验版 | ✅ 已改 |
-| 注册小游戏账号、拿 AppID | ⬜ **待你操作**（需要邮箱+手机+实名） |
-| 写入 AppID → 导入开发者工具 → 真机预览 | ⬜ 待 AppID |
-| 上传开发版 → 设为体验版 → 加白名单 | ⬜ 待上传 |
+| 注册小游戏账号、拿 AppID | ✅ `wx51cd6107e4a12e4f` 已写入配置 |
+| 上传压缩（minified）与 sourcemap | ✅ 已开，包体 1689 → 约 1000 KB（见 §3.5） |
+| 安装微信开发者工具 | ⬜ **待你操作**（本机尚未安装） |
+| 导入 → 真机预览 → 上传 → 设为体验版 | ⬜ 待工具就绪 |
 
 ### 三句话结论
 
@@ -38,8 +39,8 @@
 | 项目 | 现状 | 上架要求 | 判定 |
 |---|---|---|---|
 | 工程类型 | `project.config.json` → `compileType: "game"`，`game.js` + `game.json` | 小游戏标准结构 | ✅ |
-| AppID | `touristappid`（游客占位） | 真实 AppID | ❌ 待注册 |
-| 主包体积 | **1.7 MB** | 主包 ≤ 4 MB，主包+分包 ≤ 30 MB | ✅ 余量充足 |
+| AppID | `wx51cd6107e4a12e4f`（已写入 `project.config.json`） | 真实 AppID | ✅ |
+| 主包体积 | **1689 KB** 未压缩 → **约 1000 KB** 开启上传压缩 | 主包 ≤ 4 MB，主包+分包 ≤ 30 MB | ✅ 占 41%，余量充足（见 §3.5） |
 | 动态执行代码 | 无 `eval` / `new Function` | 微信禁止运行时执行下载/拼接的 JS | ✅ |
 | 网络请求 | `GameGlobal.__SIM_REMOTE = false`，`fetch` 是**空实现**，纯本地 | 联网需在后台配 request 合法域名 | ✅ 无需配置（见 §5.4 注意项） |
 | wx API | `createCanvas` / `getSystemInfoSync` / `onWindowResize` / `createWebAudioContext` / `Storage` / `Performance` / `Touch` | 系统信息类需在**隐私保护指引**声明 | ⚠️ 需填隐私指引 |
@@ -47,9 +48,9 @@
 | 名称 | `project.config.json` 描述已改为「自用体验版」；后台名称待注册时定 | 名称唯一、不含彩票类专有词 | ⚠️ 自用不受限 |
 | 单一真源 | `index.html` + `miniprogram/build.js` 生成小游戏产物 | — | ⚠️ 改 Web 后必须重跑 `node miniprogram/build.js` |
 
-**代码量级**：`miniprogram/` 共 16 个文件、主包 1.68 MB；`libs/three.js` 1.24 MB 是包体大头，`libs/ssq-data.js` 63 KB（2083 期历史数据）。
+**代码量级**：`miniprogram/` 共 16 个文件、未压缩 **1689 KB**；`libs/three.js` 1243 KB 占 73%，`src/game-logic.js` 265 KB，`libs/ssq-data.js` 63 KB（2083 期历史数据，纯数字压不动）。逐文件压缩实测见 §3.5。
 
-> 走**路线 B** 时，上表里标 ❌ 的「文案与视觉」「名称」**都不用改**；唯一真正的硬门槛是 **AppID**。
+> 走**路线 B** 时，上表里标 ❌ 的「文案与视觉」「名称」**都不用改**；AppID 已就位，**剩下的门槛只是装好开发者工具**。
 
 ---
 
@@ -71,19 +72,22 @@
 
 ## 3. 路线 B：体验版（先做这条）
 
-### B0. 注册小游戏账号，拿 AppID（唯一需要你本人操作的一步）
+### B0. 注册小游戏账号，拿 AppID ✅ 已完成
 1. 打开 <https://mp.weixin.qq.com> → 注册 → **小程序**（小游戏也是在这里注册）。
 2. 主体选**个人**即可（企业主体才有虚拟支付，本项目不需要）。
 3. 注册后进后台 → 「设置 → 基本设置」填名称、头像、简介；**服务类目必须选「游戏」，子类目选「休闲游戏」**。
 4. 在「开发 → 开发管理 → 开发设置」抄下 **AppID**。
    - 注意：一个邮箱只能注册一个小程序；个人主体名下小游戏数量有上限，以后台提示为准。
-   - AppID 拿到后贴给我，或自己填进下一步。
+
+**当前 AppID：`wx51cd6107e4a12e4f`**（已写入 `miniprogram/project.config.json`）
+> 后台还有一项要设：**开发 → 开发管理 → 开发设置 → 最低基础库版本**，填 `2.19.0`
+> （因为用了 `wx.createWebAudioContext`，低于 2.19.0 的客户端会直接打不开音频）。
 
 ### B1. 上传前自检（1 秒，已脚本化）
 ```bash
 node miniprogram/preflight.js
 ```
-检查 9 项，任何 `[FAIL]` 都要先修再上传：
+检查 10 项，任何 `[FAIL]` 都要先修再上传：
 
 | # | 检查项 | 为什么 |
 |---|---|---|
@@ -95,25 +99,37 @@ node miniprogram/preflight.js
 | 6 | 无 `eval` / `new Function` | 微信禁止运行时动态执行代码 |
 | 7 | `compileType=game`、竖屏、AppID 非占位 | 配置错会导入成普通小程序 |
 | 8 | `__SIM_REMOTE=false` | 确认运行期零网络，不用配合法域名 |
-| 9 | 列出全部 `wx.*` API 和最低基础库 | 用来定后台「最低基础库版本」 |
+| 9 | **浏览器全局是否都有 adapter 垫片** | 小游戏没有 DOM/BOM；Web 能跑、小游戏 ReferenceError，重构时最容易漏 |
+| 10 | 列出全部 `wx.*` API 和最低基础库 | 用来定后台「最低基础库版本」 |
+| 11 | **`minified` 配置 + 压缩语法兼容** | 开了压缩但代码里有 `?.` / `??`，上传直接 `Unexpected token`（见 §3.5） |
 
-当前结果：**0 失败 / 1 警告**（警告就是 AppID 还是 `touristappid`）。
+当前结果：**0 失败 / 0 警告**（AppID 已就位，压缩配置已开）。
 
-### B2. 写入 AppID
-改 `miniprogram/project.config.json` 的 `appid`（`description` 已改为「自用体验版」）：
+### B2. 写入 AppID ✅ 已完成
+`miniprogram/project.config.json`：
 ```json
-{ "appid": "wxXXXXXXXXXXXXXXXX", "compileType": "game" }
+{ "appid": "wx51cd6107e4a12e4f", "compileType": "game" }
 ```
-改完再跑一次 `node miniprogram/preflight.js`，警告应消失。
+改完再跑一次 `node miniprogram/preflight.js`，警告已消失。换机器/换项目时改这一处即可。
 
 ### B3. 导入项目
 微信开发者工具 → 导入 → 目录**选 `E:\shuangseqiu-3d-sim\miniprogram`**（不是仓库根目录）→ 类型自动识别为「小游戏」。
 首次打开若报基础库不兼容，在「详情 → 本地设置」把调试基础库调到 3.x 稳定版。
 
+> **用命令行代替手工点击**（需先装工具，并在「设置 → 安全设置」打开**服务端口**）：
+> ```bash
+> CLI="/c/Program Files (x86)/Tencent/微信web开发者工具/cli.bat"
+> "$CLI" open   --project "E:\shuangseqiu-3d-sim\miniprogram"
+> "$CLI" preview --project "E:\shuangseqiu-3d-sim\miniprogram" --qr-format image --qr-output "E:\shuangseqiu-3d-sim\_preview.png"
+> ```
+> `preview` 会直接吐出二维码图片，用手机微信扫即可，不必在界面里找按钮。
+> 上传同理：`"$CLI" upload --project <目录> -v 1.0.0 -d "说明"`。
+> 前提：工具里**已经用 AppID 对应账号登录过**一次。
+
 ### B4. 模拟器自测
 - 看 Console 有无红错；`game.json` 竖屏是否生效。
 - 打开「性能面板」看 FPS / 内存 / DrawCall。**基线：中端安卓 FPS ≥ 30，内存峰值 < 300 MB。**
-- 逐项点：开始摇奖 → 6 红 + 1 蓝出完 → 分布页 → 选号页 → 记录页 → 返回 3D 页。
+- 逐项点：**启动落在选号页** → 选满 6 红 + 1 蓝 → 「带这注去 3D 摇奖」→ 6 红 + 1 蓝出完 → 点「选号」看对照 → 分布页 → 记录页 → 「← 3D 开奖」回 3D。
 
 ### B5. 真机调试（「预览」扫码）
 重点看这 7 项，**任何一项不过都先别上传**：
@@ -143,12 +159,117 @@ node miniprogram/preflight.js
 ```
 改 index.html（唯一真源）
   → node miniprogram/build.js
-  → node miniprogram/preflight.js        ← 新增，10 项里第 2 项最容易踩
+  → node miniprogram/preflight.js        ← 11 项，第 2 项「产物是否比真源旧」最容易踩
   → 开发者工具点「编译」自测
   → 上传新版本号（1.0.1 / 1.0.2 …）
   → 后台重新「选为体验版」
 ```
-> 体验版不经过微信审核，但**不要把它当公开渠道传播**——体验版链接外传会被判定为绕过审核。
+> 细节与八个坑见 §3.6 末尾。体验版不经过微信审核，但**不要把它当公开渠道传播**——体验版链接外传会被判定为绕过审核。
+
+---
+
+## 3.5 包体压缩：能压什么、压不动什么
+
+**结论先行**：主包只占 4 MB 上限的 **41%**，本项目**不需要任何结构性优化**——不用分包、不用裁 three.js、不用改数据格式。真正该做且已经做掉的只有一件事：**打开上传压缩**。
+
+### 逐文件实测
+
+用 terser（`-c -m`）跑出来的结果，可看作压缩率的下限；微信内置的是老版 uglify，通常再差 5~10%。
+
+| 文件 | 原始 | 压缩后 | 比例 | 说明 |
+|---|---|---|---|---|
+| `libs/three.js` | 1243 KB | 696 KB | 56% | 占包体 73%，唯一有意义的大头 |
+| `src/game-logic.js` | 265 KB | 183 KB | 69% | 中文文案和物理常量压不动 |
+| `libs/ssq-data.js` | 62 KB | 62 KB | **99%** | 纯数字数组，mangle 完全无效 |
+| 其余 10 个 | 181 KB | 122 KB | 67% | |
+| **合计** | **1689 KB** | **约 1000 KB** | **省 40%** | 压缩后占 4 MB 的 24% |
+
+### 四个开关各管什么
+
+`miniprogram/project.config.json`：
+
+| 字段 | 值 | 作用 | 坑 |
+|---|---|---|---|
+| `minified` | `true` | 上传时压缩脚本 | **只影响下载包，不影响运行速度**；调试栈会变难读，靠下一条兜 |
+| `uploadWithSourceMap` | `true` | 上传 sourcemap | 压缩后真机报错仍能映射回源码行；`.map` **不计入包体**，开发版才带 |
+| `es6` / `enhance` | `false` / `false` | 是否把 ES6 转 ES5 / 增强编译 | **两者必须同值**，只改一个会出现「本地能跑、真机白屏」。本项目已是 ES5 写法 + adapter 垫片，开了只会更慢更大 |
+| `packOptions.ignore` | `build.js`、`preflight.js` | 上传时排除文件 | 这两个是 Node 脚本（`require('fs')` / `process.exit`），进包纯属浪费 21 KB，跑起来还会直接报错 |
+
+### 开压缩的红线（最容易踩）
+
+微信内置压缩器是**老版 uglify，认不了 ES2020+ 语法**。命中就报 `Unexpected token: punc (.)`，而且错在**上传/预览阶段**，编码阶段完全正常：
+
+| 语法 | 例子 | 结果 |
+|---|---|---|
+| 可选链 | `a?.b` | ❌ 压缩失败 |
+| 空值合并 | `a ?? b` | ❌ 压缩失败 |
+| 逻辑赋值 | `a \|\|= b` | ❌ 压缩失败 |
+| 数字分隔符 | `1_000_000` | ❌ 压缩失败 |
+| 注释里的同名字符 | `// want point??` | ✅ 无害（压缩前先剥注释） |
+
+现状：包内 **12 个待上传 js 零命中**（three.js 里那两处 `??` 在注释里）。`preflight` 第 11 项已把这条固化成检查，以后写 `?.` 会立刻报出来。
+
+### 什么时候才需要继续优化
+
+| 触发条件 | 该做什么 | 不该先做什么 |
+|---|---|---|
+| 主包 > 3.2 MB | 把 `ssq-data.js` / `sim-real.js` 拆分包，`wx.loadSubpackage` 按需拉 | 别先动 three.js |
+| 主包 > 4 MB | **必须**分包（单个独立分包 ≤ 4 MB，主包+分包合计 ≤ 30 MB） | — |
+| 首屏白屏 > 3 s | 查音频预热长帧、three 初始化、着色器首次编译 | 别怀疑包大（1 MB 在 4G 下 < 1 s） |
+| 低端机 OOM | 降 DPR 上限、关阴影、缩纹理 | 别删音频——716 KB 是**内存**不是包体，且程序化合成本来就 0 字节资源 |
+
+### 明确不值得做的三件事
+
+1. **手写 three.js 裁剪版**：r160 内部耦合深，裁错就是黑屏；696 KB 已在预算内，省下的 300 KB 换不来任何体验。
+2. **把 `ssq-data.js` 改成二进制**：2083 期 × 7 个数字，最多再省 30 KB（占 4 MB 的 0.7%），代价是一整套编解码和调试成本。
+3. **为了「小」而分包**：主包才 1 MB，分包只会新增 `wx.loadSubpackage` 的失败面（弱网超时、断点重试、缓存不命中），纯负收益。
+
+---
+
+## 3.6 版本机制与发布动作（后台照着点）
+
+### 三种版本，别搞混
+
+| 版本 | 谁生成 | 谁能看到 | 走审核 | 自动上线 |
+|---|---|---|---|---|
+| **开发版** | 开发者工具点「上传」 | 只有上传者本人（扫码） | 否 | 否 |
+| **体验版** | 后台把某个开发版「选为体验版」 | 体验成员白名单 | 否 | 否 |
+| **正式版** | 提审通过后点「发布」 | 全部用户 | 是 | 是 |
+
+### 后台路径
+
+```
+mp.weixin.qq.com → 登录 → 左侧「管理」→「版本管理」
+  ├─ 开发版本：列表里每个版本右侧「选为体验版」→ 生成二维码
+  ├─ 审核版本：提交审核后才出现，可撤回
+  └─ 线上版本：「分阶段发布」放量 / 「版本回退」回上一版
+左侧「管理」→「成员管理」→「体验成员」→ 填微信号（不是手机号）
+```
+
+### 八个坑（按踩到概率排序）
+
+1. **一个游戏只能有一个体验版**。再「选为体验版」会**顶掉**上一个，旧二维码当场失效。多人内测时先约好谁用哪版。
+2. **上传 ≠ 发布**。上传只生成开发版，不审核也不对外；很多人以为传完就上线了。
+3. **版本号不会自动递增**，上传时手填；同号可重复上传，**后者覆盖前者**。建议语义化 `1.0.0 / 1.0.1`，方便后台对照。
+4. **体验版不审核，但也不能公开传播**。把体验版二维码丢进群让人随便玩，属于「绕过审核」，会被处理。
+5. **`packOptions.ignore` 之外的文件不会报错，只会静默消失**。上传白名单外的后缀（如 `.md`、`.psd`、`.map`）不提示就被丢弃，真机才报 404。
+6. **文件名大小写在 Windows 上不敏感、在 iOS 上敏感**。`require('./libs/Three.js')` 在本机能跑，真机直接挂。
+7. **本地缓存会骗你**。开发者工具点「编译」不清 Storage，改了 `simlog` 的数据结构后旧记录还在 → 「详情 → 本地设置 → 清除全部缓存」再测；正式方案是给自己留一个 `schemaVersion` 迁移。
+8. **正式版才有的两个救命按钮**：「分阶段发布」（按比例放量，出问题立刻停）和「版本回退」（回到上一个线上版，有时限）。体验版没有这些，回滚就是重新选一个开发版。
+
+### 上传前后的动作顺序（固定套路）
+
+```
+改 index.html（唯一真源）
+  → node miniprogram/build.js      # 产物与真源同步
+  → node miniprogram/preflight.js  # 11 项自检，必须 0 失败
+  → 开发者工具「编译」→ 模拟器看 Console
+  → 「预览」→ 手机扫码走一局
+  → 「上传」1.0.x
+  → 后台「选为体验版」→ 成员扫码
+```
+
+> 顺序不能反：先 build 再 preflight。`preflight` 第 2 项专门查「产物是否比真源旧」，就是为了接住「改了 Web 忘了 build」这个最隐蔽的错——它在开发者工具里完全看不出来。
 
 ---
 
@@ -265,12 +386,13 @@ node miniprogram/preflight.js
 **路线 B（体验版）— 当前执行中**
 ```
 ✅ 工程自检 + 产物重建 + 配置改名      已完成
-⬜ 注册小游戏账号（邮箱+手机+实名）   约 20 min（含验证等待）
-⬜ 写入 AppID + preflight 复查         2 min
-⬜ 导入开发者工具 + 模拟器自测        约 30 min
+✅ 注册小游戏账号 + 写入 AppID         已完成（wx51cd6107e4a12e4f）
+✅ 开启上传压缩 + sourcemap            已完成（包体 1689 → 约 1000 KB）
+⬜ 安装微信开发者工具                  约 10 min
+⬜ 导入 + 模拟器自测                   约 30 min
 ⬜ 真机预览（B5 的 7 项验收）          约 20 min
 ⬜ 上传 + 设体验版 + 加白名单          约 10 min
-合计 ≈ 1.5 小时（从 AppID 到手算起）
+合计 ≈ 1 小时（从装完工具算起）
 ```
 
 **路线 A（公开上架）— ⏸ 已暂缓，仅备查**
@@ -285,13 +407,23 @@ node miniprogram/preflight.js
 
 ---
 
-## 8. 下一步（只剩这一件事卡住）
+## 8. 下一步（AppID 已就位，只剩装工具）
 
-**需要你提供：真实 AppID。** 其余全部已就绪。
+**已完成**：AppID `wx51cd6107e4a12e4f` 已写入 `project.config.json`；上传压缩已开（§3.5），`preflight` **0 失败 0 警告**。
+> 上传后去后台「版本管理」看包体：应该在 **1 MB 上下**。如果显示仍是 1.7 MB，说明 `minified` 没生效（工具里「详情 → 本地设置 → 上传压缩」没同步），回 `project.config.json` 确认一次。
 
-拿到后我可以接着做：
-1. 写进 `project.config.json` + 跑 `preflight` 复查（警告清零）；
-2. 按 B5 的 7 项真机验收，逐项定位问题（白屏/安全区/音效/掉帧）；
+**还没做**：本机尚未安装微信开发者工具（注册表里只有微信客户端 4.1.7.30）。
+下载（选「稳定版 Stable Build / Windows 64」）：<https://developers.weixin.qq.com/miniprogram/dev/devtools/download.html>
+
+装完后的最小闭环（B3 → B6）：
+1. 打开工具 → 微信扫码登录（必须是 `wx51cd6107e4a12e4f` 这个账号的**管理员或开发者**）；
+2. 导入目录 `E:\shuangseqiu-3d-sim\miniprogram` → 类型自动识别为「小游戏」；
+3. 模拟器看 Console 有无红错 → 点「预览」→ 手机扫码走一局；
+4. 工具栏「上传」→ 版本 `1.0.0` → 后台「版本管理 → 开发版本 → 选为体验版」。
+
+我可以接着做的：
+1. 工具装好后用 CLI 直接出预览二维码（命令见 B3），省掉手工点击；
+2. 按 B5 的 7 项真机验收逐项定位问题（白屏/安全区/音效/掉帧）；
 3. 如果要连局域网 PC 的 `picker/sim_server.js`，再单独配 `__SIM_REMOTE`（体验版需在开发者工具勾「不校验合法域名」）。
 
 > 曾讨论过、本次**不用回答**的：是否去彩票化、主体个人/企业、改名、历史数据去留 —— 都在路线 A，自用不涉及。
@@ -301,5 +433,7 @@ node miniprogram/preflight.js
 ## 附：官方参考
 - 小游戏备案 & 发布流程指引：<https://developers.weixin.qq.com/minigame/introduction/guide/bbsh.html>
 - 资质审核（IAA，免版号路径）：<https://developers.weixin.qq.com/minigame/introduction/guide/zzsh-iaa.html>
-- 代码包与体积限制：<https://developers.weixin.qq.com/minigame/dev/guide/base-ability/code-package.html>
+- 代码包与体积限制（含上传白名单）：<https://developers.weixin.qq.com/minigame/dev/guide/base-ability/code-package.html>
+- 分包加载（主包 4M / 合计 30M / 独立分包 4M）：<https://developers.weixin.qq.com/minigame/dev/guide/base-ability/subPackage/useSubPackage.html>
+- Source Map（`.map` 不计入包体）：<https://developers.weixin.qq.com/minigame/dev/guide/runtime/debug/SourceMap.html>
 - 平台运营规范（2.6.1 内容红线）：<https://developers.weixin.qq.com/miniprogram/product/>

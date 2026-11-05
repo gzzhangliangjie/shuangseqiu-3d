@@ -39,7 +39,8 @@
 
 ## 3. 八段采样清单
 
-采样率 22050Hz、Float32 单声道，合计 **183,234 点 / 8.31s / 716KB**。
+采样率 22050Hz、Float32 单声道，合计 **183,234 点 / 8.31s / 716KB**（AudioBuffer）。
+同批数据在合成阶段还有一份 `Float32Array`（733KB），两份并存约 1.45MB，**上传成功后立即释放前者**，见 §7.4。
 「总线峰值」= 采样峰值 × 播放音量 × `VOL(0.07)`。
 
 | 段 | 时长 | 采样峰值 | 播放音量 | 总线峰值 | 触发时机 | 音色构成 |
@@ -165,6 +166,9 @@
 2. **音频预热**：首帧之后在 `requestIdleCallback` 里跑 `prime() + ensure()`——合成和建 ctx 都不需要
    用户手势（无手势时 ctx 停在 `suspended`，点击时 `resume()`）。`resume()` 的 rejection 必须 catch，
    否则控制台每次都有未处理拒绝。
+   判断条件用 **`state !== 'running'`**，不能写 `=== 'suspended'`：个别实现的 `state` 取到 `undefined`
+   （iOS 被中断后是 `'interrupted'`），写死 `suspended` 会让 `resume()` 永远不触发，
+   表现是**真机全程静音、但没有任何报错**——这种问题在开发者工具里复现不出来。
 3. **节点释放**：`playBuf` / `ballFall` 的 `onended` 里 `disconnect()`。
 4. **删死代码**：`mute` / `isMuted` 全项目零调用点。
 
@@ -178,14 +182,34 @@
 
 预热代价是加载期出现一次 300ms 级长帧。若以后嫌首屏抖，把 `warmAudio` 延后即可。
 
+### 7.4 原始 PCM 的释放（省 733KB 常驻）
+
+`rawSet`（Float32Array）只服务于 `uploadSamples()`——它是 `createBuffer` 拒绝 22.05k 时**重传的唯一数据源**。
+所以释放时机必须卡在「上传全部成功之后」：
+
+```js
+let upOk = false;
+try { upOk = uploadSamples(); }
+catch (e) { try { buildSamples(ctx.sampleRate || 44100); upOk = uploadSamples(); } catch (e2) { upOk = false; } }
+if (upOk) { rawSet = null; sUploaded = true; }
+```
+
+- 两次 upload 都失败时**保留 `rawSet`**：静音运行可以，但不能把唯一的数据源丢掉。
+- 降级分支再套一层 try：`createBuffer` 在点击回调里抛异常，会把「点开始摇奖没反应」变成真正的故障。
+- `sUploaded` 是 `prime()` 的前置判断。`rawSet` 已空 ≠ 没合成过，否则第二次预热会白跑 150ms 合成，
+  再把 733KB 占回来。
+
+效果：常规机型首帧后常驻音频内存从 **~1.45MB 降到 716KB**（只剩 AudioBuffer）。
+
 ---
 
 ## 8. 验证工具链
 
-程序化音效不能只靠耳朵验收，仓库里留了四个工具：
+程序化音效不能只靠耳朵验收，仓库里留了几个工具：
 
 | 工具 | 用途 |
 |---|---|
+| `_afx_smoke.js` | **纯 Node、无依赖、约 100ms**：mock AudioContext 跑 4 个场景（正常 / `state=undefined` / 采样率降级重传 / createBuffer 全废），验证不抛异常、能 resume、原始 PCM 已释放。改音频后先跑它 |
 | `_audio_render.js` | 从 `index.html` 抽取合成核心，在 Node 里离线渲染成 `_*.raw`，改动音效后**必须**重跑 |
 | `_audio_spec.py` | 频谱重心/分频段占比/包络变异/谱峰突出度/自相关/接缝跳变 |
 | `_e2e_audio.py` | 真实浏览器跑完整一局：在 `destination` 前插 AnalyserNode 量总线电平，按阶段统计 RMS、峰值、节点创建数 |

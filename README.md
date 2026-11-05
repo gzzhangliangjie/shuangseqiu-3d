@@ -3,7 +3,9 @@
 用 Three.js 复刻中国福利彩票双色球真实摇奖机（法国 RYO CATTEAU **Myosotis**），
 **全程自己写的物理引擎**，没有预设号码或动画作弊：哪颗球被摇出，完全由物理决定。
 
-单文件网页，无需构建：双击 `index.html` 即可（此方式走 CDN）；推荐用本地 http 服务打开，
+单文件网页，无需构建：双击 `index.html` 即可（此方式走 CDN）。**入口落在「选号工具」页**
+（`picker/index.html`），3D 摇奖机是它的子页，从选号页顶部「打开 3D 摇奖机」进入；
+想直接开 3D 页，用 `index.html?raw=1`。推荐用本地 http 服务打开，
 可走内置的 `_vendor/` 本地 Three.js，秒开且离线可用（见文末「Three.js 加载源」）。
 
 ## 结构对齐真机
@@ -93,8 +95,9 @@ Three.js 0.160（importmap）+ 自写物理引擎 + CanvasTexture 号码球 + PM
 - **双击 `index.html`（file://）/ 预览沙箱**：ES module 无法 fetch 本地 `file://`（CORS），
   自动退回 CDN，**原有直接双击打开的能力不变**。
 
-本地起服务：在项目目录执行 `python3 -m http.server 8000`，浏览器打开 `http://127.0.0.1:8000/index.html`；
-若要用选号工具的完整功能，改用 `node picker/sim_server.js`（端口 8731）。
+本地起服务：在项目目录执行 `python3 -m http.server 8000`，浏览器打开 `http://127.0.0.1:8000/index.html`
+（会跳到选号工具，`/picker/index.html` 同页）；若要用选号工具的完整功能，改用 `node picker/sim_server.js`
+（端口 8731，3D 页在 <http://127.0.0.1:8731/machine>）。
 
 ## 微信小游戏（自用，不发布）
 
