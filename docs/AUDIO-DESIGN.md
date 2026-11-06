@@ -209,7 +209,7 @@ if (upOk) { rawSet = null; sUploaded = true; }
 
 | 工具 | 用途 |
 |---|---|
-| `_afx_smoke.js` | **纯 Node、无依赖、约 100ms**：mock AudioContext 跑 4 个场景（正常 / `state=undefined` / 采样率降级重传 / createBuffer 全废），验证不抛异常、能 resume、原始 PCM 已释放。改音频后先跑它 |
+| `_afx_smoke.js` | **纯 Node、无依赖、约 100ms**：mock AudioContext 跑 7 个场景（正常 / `state=undefined` / 采样率降级重传 / createBuffer 全废 / 构造器抛错 / **connect 返回 undefined + AudioParam 无自动化** / 诊断口与手势解锁常开），验证不抛异常、能 resume、原始 PCM 已释放、一次性音源被持有。改音频后先跑它 |
 | `_audio_render.js` | 从 `index.html` 抽取合成核心，在 Node 里离线渲染成 `_*.raw`，改动音效后**必须**重跑 |
 | `_audio_spec.py` | 频谱重心/分频段占比/包络变异/谱峰突出度/自相关/接缝跳变 |
 | `_e2e_audio.py` | 真实浏览器跑完整一局：在 `destination` 前插 AnalyserNode 量总线电平，按阶段统计 RMS、峰值、节点创建数 |
@@ -245,6 +245,7 @@ if (upOk) { rawSet = null; sUploaded = true; }
 | 落位听不到 | 换频段（避开 500–2k），不是调音量 |
 | 声音像电子音 | 检查是否引入了 `createOscillator`；模态比必须是非整数 |
 | 点击「开始摇奖」卡一下 | 检查 `warmAudio` 是否还在跑（预热没生效就会回到 343ms） |
+| **小游戏真机完全无声** | 见 §10 真机排查，不要按「音量太小」去调 `VOL` |
 
 ---
 
@@ -257,6 +258,33 @@ if (upOk) { rawSet = null; sUploaded = true; }
 - `copyToChannel` 早期版本缺失，已回退 `set()`。
 - 无 WebAudio 环境时 `ensure()` 返回 `null`，所有播放函数直接 return，开奖流程不受影响。
 - `miniprogram/preflight.js` 会扫描代码里用到的 wx API 并提示最低基础库。
+
+### 10.1 真机「完全听不到」排查（2026-11-06 实测暴露）
+
+浏览器、微信开发者工具、`_afx_smoke.js` 的 mock 都覆盖不到下面三条，只有真机会犯：
+
+1. **`connect()` 不保证返回目标节点。** `source.connect(gain).connect(master)` 在部分真机
+   等价于 `undefined.connect(...)` → 抛异常。旧代码在播放壳里一遇异常就 `dead = true`
+   **永久静音**，且只往 console 写一句 warn，真机没有控制台 → 全程无声、零提示。
+   现在所有连接都拆成两句，且播放异常只跳过本次，不再判死刑。
+2. **一次性 `BufferSource` 必须被 JS 持有到播完。** 微信官方明确：未持有的源会被客户端
+   提前 GC，音频直接中断（短音效表现为根本没响）。`hold()` 用 `live[]` 持有，
+   `onended` + 超时兜底释放。
+3. **iOS 的 `resume()` 必须发生在用户手势里。** 预热阶段建的 ctx 可能一直 suspended。
+   `adapter.js` 的 `wx.onTouchStart` 每次都会调 `window.__audioUnlock()`（内部幂等），
+   并设 `wx.setInnerAudioOption({ obeyMuteSwitch:false })`；系统静音键 / 媒体音量为 0
+   仍会让 WebAudio 无声，这一条只能靠用户确认。
+
+另外 `AudioParam.setValueAtTime / setTargetAtTime` 在部分实现缺失，已全部改为
+「有能力检测，缺失直接写 `.gain.value`」。
+
+**真机定位顺序**（诊断口 `window.__AFX()` 常开，不再依赖 `?debug`）：
+- 屏幕弹「音效不可用 · xxx」→ 按提示的原因看 `issue` 字段；
+- `hasAC=false` → 基础库 < 2.19.0，后台最低版本要设 2.19.0；
+- `uploaded=false` → `createBuffer` 写入失败；`peak/rms=0` → AudioBuffer 是空的，
+  需要改走 `decodeAudioData`（内存 WAV）路线；
+- `ctxState` 不是 `running` → 手势解锁没生效；
+- 以上都正常仍无声 → 手机静音键 / 媒体音量，或 `VOL = 0.07` 在扬声器上偏轻。
 
 ---
 

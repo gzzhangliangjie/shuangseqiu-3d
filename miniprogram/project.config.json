@@ -10,12 +10,37 @@
     "minified": true,
     "uploadWithSourceMap": true,
     "postcss": false,
-    "autoAudits": false
+    "autoAudits": false,
+    "compileWorklet": false,
+    "uglifyFileName": false,
+    "packNpmManually": false,
+    "packNpmRelationList": [],
+    "minifyWXSS": true,
+    "minifyWXML": true,
+    "localPlugins": false,
+    "disableUseStrict": false,
+    "useCompilerPlugins": false,
+    "condition": false,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
   },
   "packOptions": {
     "ignore": [
-      { "type": "file", "value": "build.js" },
-      { "type": "file", "value": "preflight.js" }
-    ]
-  }
+      {
+        "value": "build.js",
+        "type": "file"
+      },
+      {
+        "value": "preflight.js",
+        "type": "file"
+      }
+    ],
+    "include": []
+  },
+  "simulatorPluginLibVersion": {},
+  "isGameTourist": false,
+  "editorSetting": {}
 }

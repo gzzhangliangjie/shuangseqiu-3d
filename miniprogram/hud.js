@@ -1,9 +1,11 @@
 /* ============================================================
-   UI 表面：一张离屏 2D 画布 + 一张 CanvasTexture + 一个全屏正交 quad
+   UI 表面：一张离屏 2D 画布，每帧由 composite() 叠到上屏 2D 画布
    ------------------------------------------------------------
    开奖页画 HUD；选号页 / 记录页由 pages.js 通过 __ui.renderPage 画在
-   **同一张**画布上。页面切换不新增纹理、不新增全屏 blit，只有状态
-   变化时才 redraw + needsUpdate，平时零上传。
+   **同一张**画布上。页面切换不新增任何资源，只有状态变化时才 redraw。
+   3D 画在 adapter 创建的离屏 WebGL 画布上，合成顺序 3D → UI；
+   UI 画布在舞台区域透明，3D 正好透出来，舞台外是不透明底色。
+   这样完全不依赖 WebGL 纹理上传，模拟器 WebGL1 与真机行为一致。
    伪 DOM 元素由 adapter.js 提供，Web 端 HUD 逻辑一行不改。
 
    方向策略（重要）
@@ -19,38 +21,71 @@
 (function () {
   'use strict';
 
-  const THREE = require('./libs/three.js');
-
+  /* 纯 2D：不再引入 three。上屏画布由 adapter 取 2D context，3D 画在离屏
+     WebGL 画布上，这里只负责画 UI 画布并每帧把两层叠加上去（composite）。 */
   const cv = wx.createCanvas();
   const ctx = cv.getContext('2d');
   const resultsEl = GameGlobal.document.getElementById('results');
   const phaseEl = GameGlobal.document.getElementById('phase');
   const startBtn = GameGlobal.document.getElementById('startBtn');
   const resetBtn = GameGlobal.document.getElementById('resetBtn');
-
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.minFilter = THREE.LinearFilter;
-  tex.magFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-  camera.position.z = 1;
-  const quad = new THREE.Mesh(
-    new THREE.PlaneGeometry(2, 2),
-    new THREE.MeshBasicMaterial({
-      map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false
-    })
-  );
-  quad.frustumCulled = false;
-  scene.add(quad);
+  /* 2D 合成：在上屏画布（2D）上按顺序叠加 3D 层与 UI 层。
+     UI 画布在舞台区域是透明的（drawHUD 里 clearRect 挖空），3D 因此能透出来；
+     舞台外是不透明深色底，正好盖住离屏 WebGL 画布的空区。
+     选号/记录页不渲 3D，此时只画 UI 层，避免把上一帧的 3D 残留带过来。 */
+  function composite() {
+    const main = GameGlobal.__mainCanvas;
+    const mc = GameGlobal.__mainCtx;
+    const glc = GameGlobal.__glCanvas;
+    if (!main || !mc) return;
+    const w = main.width, h = main.height;
+    if (!(w > 0 && h > 0)) return;
+    mc.setTransform(1, 0, 0, 1, 0, 0);
+    mc.clearRect(0, 0, w, h);
+    const ui = GameGlobal.__ui;
+    if ((!ui || ui.isDrawPage()) && glc && glc.width > 0) {
+      try { mc.drawImage(glc, 0, 0, w, h); }
+      catch (e) { /* 少数基础库不支持把 WebGL 画布当 drawImage 源 */ }
+    }
+    if (cv.width > 0) {
+      try { mc.drawImage(cv, 0, 0, w, h); } catch (e) {}
+    }
+    /* 触摸落点提示：主循环停摆时，这是唯一能确认「事件确实派发到了」的通道。
+       260ms 后由 draw() 清掉；短按之外几乎看不见，不干扰正常页面。 */
+    if (tapFlash && Date.now() < tapFlash.until) {
+      const k = (GameGlobal.__wxInfo && GameGlobal.__wxInfo.pixelRatio) || S || 1;
+      try {
+        mc.beginPath();
+        mc.arc(tapFlash.x * k, tapFlash.y * k, 15 * k, 0, Math.PI * 2);
+        mc.strokeStyle = 'rgba(255,255,255,.75)';
+        mc.lineWidth = 2 * k;
+        mc.stroke();
+        mc.beginPath();
+        mc.arc(tapFlash.x * k, tapFlash.y * k, 3 * k, 0, Math.PI * 2);
+        mc.fillStyle = 'rgba(255,208,92,.95)';
+        mc.fill();
+      } catch (e) {}
+    }
+    /* 异常时把原因画到屏幕上（小游戏没有控制台面板，开发者工具的 console
+       通道也常断）。正常时零开销、不污染画面。 */
+    if (GameGlobal.__fatalErr) {
+      mc.fillStyle = '#b71c1c';
+      mc.fillRect(0, 0, w, 190);
+      mc.fillStyle = '#fff';
+      mc.font = 'bold 26px sans-serif';
+      mc.fillText('运行异常', 12, 40);
+      mc.font = '18px sans-serif';
+      const lines = String(GameGlobal.__fatalErr).match(/.{1,40}/g) || [];
+      lines.slice(0, 5).forEach(function (t, i) { mc.fillText(t, 12, 76 + i * 26); });
+    }
+  }
 
   let W = 0, H = 0, S = 1, safeTop = 0, safeBottom = 0, safeL = 0, safeR = 0;
   let dirty = true;
   /* 轻提示（toast）：摇完一期入列后弹一句「已记入开奖记录」——
      Web 版这块是 DOM 的 #simPrompt，小游戏没有 DOM，画在 HUD 上 */
   let toastMsg = null;                /* { text, until } */
+  let tapFlash = null;                /* { x, y, until } 触摸落点提示 */
   function toast(text, ms) {
     toastMsg = { text: String(text == null ? '' : text), until: Date.now() + (ms || 2200) };
     dirty = true;
@@ -72,8 +107,11 @@
 
   function relayout() {
     const info = wx.getSystemInfoSync();
-    W = info.screenWidth;
-    H = info.screenHeight;
+    /* 开发者工具的部分基础库会把 screenWidth/screenHeight 给成 0 或 undefined，
+       一旦为 0，离屏画布是 0×0、draw() 里 viewport 也是 0×0 —— UI 整层消失
+       却不抛任何异常。windowWidth/Height 兜底，再兜底用常见竖屏尺寸。 */
+    W = info.screenWidth || info.windowWidth || 375;
+    H = info.screenHeight || info.windowHeight || 667;
     /* 与物理像素 1:1：以前封顶 2，在 dpr3 的机器上 HUD 被放大 1.5 倍，
        文字和圆球边缘就是从这里开始糊的 */
     S = Math.min(info.pixelRatio || 1, 3);
@@ -281,36 +319,56 @@
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cv.width, cv.height);
     ctx.setTransform(S, 0, 0, S, 0, 0);
-    const ui = GameGlobal.__ui;
-    if (ui && !ui.isDrawPage()) ui.renderPage(ctx, W, H, M);
-    else drawHUD();
-    tex.needsUpdate = true;
-    dirty = false;
+    try {
+      const ui = GameGlobal.__ui;
+      if (ui && !ui.isDrawPage()) ui.renderPage(ctx, W, H, M);
+      else drawHUD();
+    } catch (e) {
+      /* 绘制炸了也不能让整块 UI 消失：铺底色 + 把错误直接写在屏幕上。
+         小游戏没有控制台面板，屏幕是唯一一定看得见的通道。 */
+      const err = String(e && (e.stack || e.message || e));
+      paintBackdrop();
+      ctx.fillStyle = '#ff8a80';
+      ctx.font = '13px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('[ui] ' + err.slice(0, 200), 12, 60);
+      if (!GameGlobal.__uiErr) { GameGlobal.__uiErr = err; console.error('[ui] redraw', err); }
+    }
+    dirty = false;                 /* 2D 合成每帧直接读这张画布，无需纹理上传 */
   }
 
-  /* HUD 每一帧都要「先恢复全屏、画完再还原舞台视口」，
-     这里复用两个 Vector4 存旧值，避免每帧分配 */
-  const _vp = new THREE.Vector4();
-  const _sc = new THREE.Vector4();
-
-  function draw(renderer) {
-    /* toast 过期要在这里判：drawHUD 里设 dirty 会被 redraw() 末尾清掉 */
+  /* 主循环每帧调用：3D 已经画进离屏 WebGL 画布，这里只做 2D 合成。
+     renderer 参数保留是为了兼容注入代码，不再使用。 */
+  function draw() {
+    /* 帧自检：主循环到底有没有在跑、一帧合成要多久。开发者工具的模拟器
+       用软件渲染，全屏 drawImage(WebGL 画布) 可能慢到把 JS 线程占满 ——
+       那样界面停在静态首帧、定时器和所有触摸回调都排不上队，表现就是
+       「画面完整但点哪儿都没反应」。每 30 帧落一次 storage，开销可忽略。 */
+    const B = GameGlobal.__ssqBoot;
+    let t0 = 0;
+    if (B) { t0 = Date.now(); B.frames = (B.frames || 0) + 1; }
+    if (tapFlash && Date.now() > tapFlash.until) tapFlash = null;
     if (toastMsg && Date.now() > toastMsg.until) { toastMsg = null; dirty = true; }
     if (dirty) redraw();
-    const prevClear = renderer.autoClear;
-    const prevTest = renderer.getScissorTest();
-    renderer.getViewport(_vp);
-    renderer.getScissor(_sc);
-    renderer.autoClear = false;
-    /* HUD 是全屏层，必须铺满整块画布，不能被 3D 舞台的 viewport/scissor 裁掉；
-       画完原样还原，下一帧 3D 才能继续只在舞台里渲染。 */
-    renderer.setScissorTest(false);
-    renderer.setViewport(0, 0, W, H);
-    renderer.render(scene, camera);
-    renderer.setViewport(_vp.x, _vp.y, _vp.z, _vp.w);
-    renderer.setScissor(_sc.x, _sc.y, _sc.z, _sc.w);
-    renderer.setScissorTest(prevTest);
-    renderer.autoClear = prevClear;
+    try { composite(); }
+    catch (e) {
+      if (!GameGlobal.__uiErr) { GameGlobal.__uiErr = String(e); console.error('[hud] composite', e); }
+    }
+    if (B && t0) {
+      B.lastFrameMs = Date.now() - t0;
+      B.frameT = Date.now();
+      if (B.frames <= 3 || B.frames % 30 === 0) {
+        try { wx.setStorageSync('__ssq_boot', JSON.stringify(B)); } catch (e) {}
+      }
+    }
+  }
+
+  /* adapter 在 touchstart 里调用：立刻合成一帧，不等 rAF。
+     开发者工具模拟器主循环可能没跑起来，只打标记的话点了跟没点一样。 */
+  function flashTap(x, y) {
+    tapFlash = { x: x, y: y, until: Date.now() + 260 };
+    try { composite(); } catch (e) {}
   }
 
   function hitTest(x, y) {
@@ -344,12 +402,20 @@
   };
 
   GameGlobal.__hud = {
-    markDirty() { dirty = true; },
+    markDirty() {
+      dirty = true;
+      /* 立刻重绘一次，不等下一帧 rAF。开发者工具的模拟器里主循环可能停摆
+         （或还没起来），只打 dirty 标记的话，点按钮改了状态却完全没有反馈，
+         表现就是「整个页面点不动」。真机上多这一次即时绘制无副作用。 */
+      try { redraw(); composite(); }
+      catch (e) { if (!GameGlobal.__uiErr) GameGlobal.__uiErr = String(e); }
+    },
     draw,
     hitTest,
     relayout,
     toast,
-    surface: { cv, ctx, tex, scene, camera },
+    flashTap,
+    surface: { cv, ctx },
     metrics: M
   };
 })();

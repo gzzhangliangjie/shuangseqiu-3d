@@ -520,10 +520,6 @@
     return true;
   }
 
-  /* 启动即落地选号页：open('tool') 会顺带做一次记录同步与「带注」结算，
-     免得首屏切到选号 tab 时 logRows / MATCH.result 还是空的。 */
-  open('tool');
-
   GameGlobal.__ui = {
     current: function () { return current; },
     isDrawPage,
@@ -535,6 +531,15 @@
     regions() { return regions.slice(); },
     draw(renderer) { hud.draw(renderer); }
   };
+
+  /* 必须在 __ui 挂好之后才 open：open() 里的 dirty() 会同步走
+     hud.markDirty() → redraw() → __ui.renderPage()，而 renderPage 才是
+     唯一填充 regions（点击区）的地方。以前 __ui 在 open 之后才赋值，
+     这次首绘会误判成「开奖页」而画 HUD，regions 一直是空数组 ——
+     首屏看起来正常，但点哪儿都没反应。 */
+  /* 启动即落地选号页：open('tool') 会顺带做一次记录同步与「带注」结算，
+     免得首屏切到选号 tab 时 logRows / MATCH.result 还是空的。 */
+  open('tool');
 
   console.log('[pages] ready · 历史 ' + A.N + ' 期 · 选号/记录页已挂载');
 })();

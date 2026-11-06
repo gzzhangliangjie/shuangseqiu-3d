@@ -1,8 +1,11 @@
 /* AudioFX 行为冒烟（纯 Node，无依赖）：把 index.html 里的音频块抽出来，
-   在 mock AudioContext 上跑 4 个场景。改音频后跑一次，防止下面三类回归：
+   在 mock AudioContext 上跑 6 个场景。改音频后跑一次，防止下面几类回归：
      · ctx.state 不是 'suspended' 的机型上 resume 从不被调用 → 真机全程静音
      · createBuffer 拒绝 22.05k 时的降级重传
      · AudioBuffer 建好后原始 PCM 是否释放（省 ~730KB 常驻）
+     · 微信小游戏真机：connect() 返回 undefined、AudioParam 无自动化方法
+       （旧写法 source.connect(g).connect(master) 在这里必抛 → 永久静音）
+     · 一次性 BufferSource 是否被持有到播完（微信客户端会提前 GC 未持有的源）
    用法：node _afx_smoke.js
    注意：这里只验行为，不能替代真机听感。 */
 const fs = require('fs');
@@ -30,7 +33,13 @@ function mkWin(opts, out) {
       out.push(this);
     }
     createGain() {
-      return { gain: { value: 1, setTargetAtTime() {} }, connect(n) { return n || this; }, disconnect() {} };
+      const gain = { value: 1 };
+      if (!opts.noParam) {
+        gain.setTargetAtTime = function () {};
+        gain.setValueAtTime = function () {};
+        gain.exponentialRampToValueAtTime = function () {};
+      }
+      return { gain: gain, connect(n) { return opts.noChain ? undefined : (n || this); }, disconnect() {} };
     }
     createBuffer(ch, len, sr) {
       this.createBufferCount++;
@@ -40,7 +49,8 @@ function mkWin(opts, out) {
     }
     createBufferSource() {
       return { buffer: null, loop: false, playbackRate: { value: 1 },
-        connect(n) { return n || this; }, disconnect() {}, start() {}, stop() {}, onended: null };
+        connect(n) { return opts.noChain ? undefined : (n || this); },
+        disconnect() {}, start() {}, stop() {}, onended: null };
     }
     resume() { this.resumeCount++; if (this.state !== 'running') this.state = 'running'; return Promise.resolve(); }
   }
@@ -114,6 +124,33 @@ console.log('\n5. 整块 WebAudio 不可用（new AudioContext 直接抛）');
   const t = performance.now(); afx.ensure(); const dt = performance.now() - t;
   ok(dt < 5, `失败后被标记为不可用，不再重试（二次 ensure ${dt.toFixed(2)} ms）`);
   ok(!win.__AFX().uploaded, '没有 AudioBuffer 被建出来，静音但游戏可玩');
+}
+
+console.log('\n6. 微信小游戏真机：connect() 返回 undefined + AudioParam 无自动化方法');
+{
+  const { afx, win } = load({ noChain: true, noParam: true });
+  let threw = null;
+  try {
+    afx.ensure();
+    afx.start(); afx.gateOpen(); afx.ballOut(); afx.place(); afx.done(); afx.reset();
+    afx.ballFall(1);
+    afx.stir(1); afx.stir(0);
+  } catch (e) { threw = e; }
+  ok(!threw, '全部播放入口不抛异常（旧链式 connect 在这里必炸→永久静音）');
+  const d = win.__AFX();
+  ok(d.dead === false, '没有被判成永久静音');
+  ok(!d.issue, '没有降级告警（' + (d.issue || '无') + '）');
+  ok(d.live >= 7, `一次性音源被持有到播完（live=${d.live}），不会被客户端提前 GC`);
+  ok(d.gain >= 0, `搅拌增益在无自动化方法时仍能赋值（gain=${d.gain}）`);
+}
+
+console.log('\n7. 诊断口与手势解锁口常开（真机没有 ?debug 查询串）');
+{
+  const { win } = load({});
+  ok(typeof win.__AFX === 'function', '__AFX 可用');
+  ok(typeof win.__audioUnlock === 'function', '__audioUnlock 可用（adapter 首触恢复 ctx）');
+  const d = win.__AFX();
+  ok('hasAC' in d && 'ctxState' in d && 'issue' in d, '诊断字段含 WebAudio 能力 / ctx 状态 / 失败原因');
 }
 
 console.log('\n' + (fail ? `❌ ${fail} 项未通过` : '✅ 全部通过'));

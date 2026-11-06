@@ -54,24 +54,65 @@ const AudioFX = (() => {
 
   const clamp01 = v => (v > 1 ? 1 : (v > 0 ? v : 0));
 
+  /* ===== 微信小游戏真机专属兼容（浏览器 / Node 冒烟都测不出来）=====
+     1) connect() 不保证返回目标节点：source.connect(gain).connect(master) 在部分真机上
+        等价于 undefined.connect(...) → 抛异常 → 旧逻辑直接永久静音，全程无声且零提示；
+     2) BufferSource 必须被 JS 持续持有，否则客户端会提前 GC 掉它，短音效直接不响；
+     3) AudioParam 的 setValueAtTime / setTargetAtTime 在部分实现里缺失。
+     下面所有播放路径都按这三条写，失败原因还会 toast 到画面上（真机没有控制台）。 */
+  const live = [];                           /* 活跃的一次性音源，持到播完 */
+  let issue = null, reported = false;
+  const seen = Object.create(null);
+  function report(what, e) {
+    const msg = what + '：' + ((e && e.message) || e || '');
+    if (seen[msg]) return;                  /* 主循环每帧调用，别刷屏 */
+    seen[msg] = 1; issue = msg;
+    console.warn('[audio] ' + msg);
+    if (!reported && window.__hud && window.__hud.toast) {
+      reported = true;
+      try { window.__hud.toast('音效不可用 · ' + what, 4000); } catch (e2) {}
+    }
+  }
+  /* 一次性音源：持有 + 播完断开。onended 不触发的实现还要有超时兜底，
+     否则一局下来节点会越挂越多。 */
+  function hold(s, g, secs) {
+    const rec = { done: false };
+    live.push(rec);
+    const drop = () => {
+      if (rec.done) return;
+      rec.done = true;
+      const i = live.indexOf(rec);
+      if (i >= 0) live.splice(i, 1);
+      try { s.disconnect(); } catch (e) {}
+      try { g.disconnect(); } catch (e) {}
+    };
+    s.onended = drop;
+    setTimeout(drop, Math.ceil(secs * 1000) + 800);
+  }
+
   /* 初始化失败一次就永久降级静音：某些机型/基础库的 WebAudio 会在 createBuffer、
      createGain 或 resume 上抛异常，重试只会每点一次抛一次，且异常会冒到点击回调里
-     把「开始摇奖」卡死在 disabled（表现为按钮点不动）。 */
+     把「开始摇奖」卡死在 disabled（表现为按钮点不动）。
+     注意：只有「连 ctx 都建不起来」才永久静音，播放路径的异常只跳过本次。 */
   let dead = false;
   function ensure() {
     if (dead) return null;
     try { return ensureInner(); }
     catch (e) {
-      dead = true; ctx = null; master = null; stirGain = null; stirSrc = null;
-      console.warn('[audio] WebAudio 不可用，已降级为静音：' + (e && e.message));
+      /* 只清半成品，真实手势到来时还可以重建：预热阶段一次机型差异
+         绝不能把整局音效判死刑。dead 只在 AudioContext 构造器不可用时置位。 */
+      ctx = null; master = null; stirGain = null; stirSrc = null;
+      report('WebAudio 初始化失败', e);
       return null;
     }
   }
   function ensureInner() {
     if (!ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return null;
-      ctx = new AC();
+      if (!AC) { dead = true; report('微信版本不支持 WebAudio（需基础库 2.19+）'); return null; }
+      try { ctx = new AC(); }
+      catch (e) { dead = true; throw e; }      /* 构造器都没有：不必重试 */
+      master = ctx.createGain();
       master = ctx.createGain();
       master.gain.value = muted ? 0 : VOL;
       master.connect(ctx.destination);
@@ -91,11 +132,14 @@ const AudioFX = (() => {
       }
       /* 原始 PCM 只在重传时需要；AudioBuffer 建好后释放，省 ~730 KB 常驻。
          清空必须放在上传成功之后：失败路径还要靠它按设备采样率重算。 */
-      if (upOk) { rawSet = null; sUploaded = true; }
+      if (upOk) {
+        rawSet = null; sUploaded = true;
+        /* 搅拌循环单独兜底：它挂了也不能连累 8 个事件声（旧写法会让整个 ensure 抛异常）。 */
+        try { startStirLoop(); } catch (e) { report('搅拌循环启动失败', e); }
+      }
       if (location.search.indexOf('debug') >= 0)
         window.__T = { build: +(_t1 - _t0).toFixed(1), upload: +(nowMs() - _t1).toFixed(1),
                        primed: _t1 - _t0 < 1 };
-      startStirLoop();
     }
     if (ctx.state !== 'running' && ctx.resume) {
       /* 刻意不写 === 'suspended'：个别实现 state 是 undefined（iOS 被中断后为 'interrupted'），
@@ -508,17 +552,17 @@ const AudioFX = (() => {
 
   /* ================= 播放（运行时，只建 BufferSource + Gain） ================= */
   function playBuf(b, vol, when, rate) {
-    if (!ensure() || muted || !b) return;
+    if (!ensure() || muted || !b || !sUploaded) return;
     const t = now() + (when || 0);
     const s = ctx.createBufferSource();
     s.buffer = b;
     if (rate) s.playbackRate.value = rate;
     const g = ctx.createGain();
     g.gain.value = vol;
-    s.connect(g).connect(master);
-    /* 播完主动断开：不依赖 GC 回收 AudioNode（各实现时机差异很大，
-       一局下来会挂着几十个已静音的节点）。 */
-    s.onended = () => { try { s.disconnect(); g.disconnect(); } catch (e) {} };
+    /* 必须分开连：微信小游戏真机上 connect() 可能返回 undefined */
+    s.connect(g);
+    g.connect(master);
+    hold(s, g, (b.duration || 0.5) / (rate || 1));
     s.start(t);
   }
   const vary = (a) => 1 - a + Math.random() * a * 2;   /* 每次播放微调速度：同一采样也不会「复读」 */
@@ -532,7 +576,7 @@ const AudioFX = (() => {
 
   /* ---------- ② 下落：整批球落入搅拌室（1 个 BufferSource + 1 个 Gain，播完即回收） ---------- */
   function ballFall(power) {
-    if (!ensure()) return;
+    if (!ensure() || !sUploaded) return;
     const t = now();
     if (t - tFall < 0.12) return;                 /* 连发合并：几十颗球一起落，听感是一声而不是一片杂音 */
     tFall = t;
@@ -541,11 +585,16 @@ const AudioFX = (() => {
     s.buffer = fallBuf;
     s.playbackRate.value = 0.96 + Math.random() * 0.08;
     const g = ctx.createGain();
-    /* 40ms 渐入：不给渐入的话起头是一个直角，听感像有人突然拍桌子 */
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.55 * p, t + 0.04);
-    s.connect(g).connect(master);
-    s.onended = () => { try { s.disconnect(); g.disconnect(); } catch (e) {} };
+    /* 40ms 渐入：不给渐入的话起头是一个直角，听感像有人突然拍桌子。
+       部分小游戏实现没有 AudioParam 自动化方法，直接赋值也能响。 */
+    const ap = g.gain;
+    if (typeof ap.setValueAtTime === 'function' && typeof ap.exponentialRampToValueAtTime === 'function') {
+      ap.setValueAtTime(0.0001, t);
+      ap.exponentialRampToValueAtTime(0.55 * p, t + 0.04);
+    } else ap.value = 0.55 * p;
+    s.connect(g);
+    g.connect(master);
+    hold(s, g, 1.2);
     s.start(t);
   }
 
@@ -572,7 +621,9 @@ const AudioFX = (() => {
     const v = muted ? 0 : clamp01(level) * STIR_LV;
     if (v - stirLv < 0.005 && stirLv - v < 0.005) return;
     stirLv = v;
-    stirGain.gain.setTargetAtTime(v, ctx.currentTime, 0.09);
+    const ap = stirGain.gain;
+    if (typeof ap.setTargetAtTime === 'function') ap.setTargetAtTime(v, ctx.currentTime, 0.09);
+    else ap.value = v;
   }
 
   /* 空闲预合成：只算数据，不建 AudioContext（无需用户手势）。
@@ -583,10 +634,16 @@ const AudioFX = (() => {
     try { buildSamples(SR); return true; } catch (e) { rawSet = null; return false; }
   }
 
-  /* 诊断口：仅 ?debug 下存在。查「搅拌到底有没有出声」用——
-     gain 是不是推上去了、buffer 里到底有没有能量。 */
+  /* 诊断口常开：真机调试没有 ?debug 查询串，而「完全听不到」必须能一眼查到
+     是没拿到 WebAudio、ctx 没 running、buffer 没能量，还是哪一步抛了异常。 */
   const dbg = () => {
-    if (!stirBuf) return { ok: false };
+    const base = {
+      ok: !!stirBuf, hasAC: !!(window.AudioContext || window.webkitAudioContext),
+      ctxState: ctx && ctx.state, uploaded: sUploaded, dead: dead,
+      live: live.length, issue: issue, muted: muted, playing: !!stirSrc,
+      gain: stirGain ? +stirGain.gain.value.toFixed(3) : -1
+    };
+    if (!stirBuf) return base;
     const c = stirBuf.getChannelData(0);
     let pk = 0, ss = 0, m = 0;
     for (let i = 0; i < c.length; i += 3) {
@@ -594,14 +651,14 @@ const AudioFX = (() => {
       if (a > pk) pk = a;
       ss += c[i] * c[i]; m++;
     }
-    return {
-      ok: true, sr: stirBuf.sampleRate, dur: stirBuf.duration,
-      peak: +pk.toFixed(3), rms: +Math.sqrt(ss / m).toFixed(4),
-      gain: stirGain ? +stirGain.gain.value.toFixed(3) : -1,
-      playing: !!stirSrc, ctxState: ctx && ctx.state, muted, uploaded: sUploaded
-    };
+    base.sr = stirBuf.sampleRate; base.dur = stirBuf.duration;
+    base.peak = +pk.toFixed(3); base.rms = +Math.sqrt(ss / m).toFixed(4);
+    return base;
   };
-  if (location.search.indexOf('debug') >= 0) window.__AFX = dbg;
+  window.__AFX = dbg;
+  /* 首次真实触摸解锁：iOS 上预热建的 ctx 必须在用户手势里 resume 才会真正出声。
+     adapter.js 的 wx.onTouchStart 会调它；ensure 内部幂等，多点几次无副作用。 */
+  window.__audioUnlock = function () { try { ensure(); } catch (e) {} };
 
   /* 导出统一加一层「静音壳」：音频是纯增强，任何一个音频方法抛异常都绝不能冒到
      摇奖状态机里。真实踩过的坑：updateMachine 里 m.loadOpen 先置 true、接着调
@@ -616,8 +673,9 @@ const AudioFX = (() => {
       if (dead) return;
       try { return fn.apply(null, arguments); }
       catch (e) {
-        dead = true; ctx = null; master = null; stirGain = null; stirSrc = null;
-        console.warn('[audio] ' + k + ' 抛异常，已永久静音：' + (e && e.message));
+        /* 只跳过这一次：旧写法一遇到机型差异就 dead=true，整局音效全废，
+           而且只往 console 里写一句 warn，真机上根本看不见。 */
+        report(k + ' 播放失败', e);
       }
     };
   }
@@ -630,7 +688,8 @@ const AudioFX = (() => {
      小游戏的 3D 只画在一条舞台上（面积约为全屏的 1/3），填充率完全吃得下。
    - PCF 阴影：Basic 是硬边单采样，投影边缘的锯齿比模型本身更明显。
    - 分辨率自适应见下方 Platform + applySize()（DPR 封顶 3 + 动态 resScale）。 */
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.canvas });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.__glCanvas, preserveDrawingBuffer: true });
+GameGlobal.__renderer = renderer;   /* 诊断口：真机/模拟器排查渲染状态用 */
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 /* ACES 色调映射：高光柔和滚降，画面不再「所有东西一样亮」的死白 */
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -705,9 +764,10 @@ const Platform = (() => {
     return {
       isWX: true,
       getViewport() {
-        const w = (typeof window !== 'undefined' && window.innerWidth) || info.screenWidth;
-        const h = (typeof window !== 'undefined' && window.innerHeight) || info.screenHeight;
-        return { w, h, dpr: info.pixelRatio || 1 };
+        /* 小游戏的 window 是基础库占位对象（innerWidth/innerHeight 恒为 1），
+           早期 adapter 把 window 换成 GameGlobal 才掩盖了这个问题。不再覆盖全局后
+           必须直接用 wx 的系统信息，否则 renderer.setSize(1,1) → WebGL 画布 3x3 → 3D 全黑。 */
+        return { w: info.screenWidth, h: info.screenHeight, dpr: info.pixelRatio || 1 };
       },
       /* 小游戏安全区：info.safeArea（刘海/Home 指示条）。HUD 在骨架阶段读它避让。 */
       getSafeArea() {
@@ -2533,9 +2593,13 @@ function animate() {
   const _st = stageRect();
   if (_st) renderer.setScissorTest(true);
   if (!GameGlobal.__ui || GameGlobal.__ui.isDrawPage()) {
-    renderer.render(scene, camera);
+    try { renderer.render(scene, camera); }
+    catch (e) { if (!GameGlobal.__fatalErr) { GameGlobal.__fatalErr = "render: " + String(e && (e.stack || e.message || e)); console.error("[3d]", e); } }
   }
-  if (GameGlobal.__ui) GameGlobal.__ui.draw(renderer);
+  if (GameGlobal.__hud) {
+    try { GameGlobal.__hud.draw(renderer); }
+    catch (e) { if (!GameGlobal.__uiErr) { GameGlobal.__uiErr = String(e); console.error("[ui]", e); try { scene.background.setHex(0xd50000); } catch (e2) {} } }
+  }
   if (_st) renderer.setScissorTest(false);
 }
 /* 音频预热：合成数据（157ms）+ 建 AudioContext（186ms）都在首帧之后趁空闲做掉。

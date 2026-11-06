@@ -51,10 +51,22 @@ console.log('构建微信小游戏代码包 ...');
   const marker = '\nexport { ';
   const i = s.lastIndexOf(marker);
   must(i > 0, 'three.module.js 末尾 export 列表未找到（three 版本结构变了？）');
-  const body = s.slice(0, i);
+  let body = s.slice(0, i);
   const list = s.slice(i + marker.length).replace(/\s*\};\s*$/, '');
   must(list.length > 100, 'export 列表异常短');
   must(!/^\s*import\s/m.test(body), 'three.module.js 出现未预期的 import');
+
+  /* 小游戏专属降级（Web 端真源 _vendor/three.module.js 不动）：
+     r160 把 MeshStandardMaterial / MeshPhysicalMaterial 都编译成同一个 physical
+     着色器，lights_physical_fragment 里**无条件**用 dFdx/dFdy 算 geometryRoughness。
+     微信开发者工具的 WebGL1 不提供 OES_standard_derivatives，片元着色器编译直接
+     失败 → 玻璃罩、底座、球、金属件全都不绘制，屏幕只剩背景和 logo（画面不全）。
+     这里把导数计算换成常量 0：只是少了随法线梯度的粗糙度补偿，肉眼几乎无差，
+     但能让无 derivatives 扩展的 WebGL1 正常出图；真机支持该扩展时也不受影响。 */
+  const DERIV = /vec3 dxy = max\( abs\( dFdx\( nonPerturbedNormal \) \), abs\( dFdy\( nonPerturbedNormal \) \) \);\\nfloat geometryRoughness = max\( max\( dxy\.x, dxy\.y \), dxy\.z \);/;
+  must(DERIV.test(body), 'three.js 的 geometryRoughness 导数代码未匹配（three 版本变了？）');
+  body = body.replace(DERIV, 'float geometryRoughness = 0.0;');
+
   write(path.join(LIBS, 'three.js'), AUTO + body + '\nmodule.exports = { ' + list + ' };\n');
 }
 
@@ -101,7 +113,8 @@ addon('environments/RoomEnvironment.js', 'RoomEnvironment.js', 'RoomEnvironment'
   const rendererLine = 'const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });';
   must(s.includes(rendererLine), 'WebGLRenderer 构造语句未匹配（index.html 改过？同步 build.js）');
   s = s.replace(rendererLine,
-    'const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.canvas });');
+    'const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, canvas: GameGlobal.__glCanvas, preserveDrawingBuffer: true });\n' +
+    'GameGlobal.__renderer = renderer;   /* 诊断口：真机/模拟器排查渲染状态用 */');
 
   /* 注入 2：3D 只在开奖页渲染（选号/记录页是全屏 UI，跳过 3D 省 GPU），
      之后统一交给 __ui 叠加 UI 层。按「行」匹配，避免 CRLF 对不上。 */
@@ -109,9 +122,19 @@ addon('environments/RoomEnvironment.js', 'RoomEnvironment.js', 'RoomEnvironment'
   must(renderRe.test(s), '主循环 renderer.render 未匹配');
   s = s.replace(renderRe, (line, indent, trail) =>
     indent + "if (!GameGlobal.__ui || GameGlobal.__ui.isDrawPage()) {" + trail + '\n' +
-    indent + '  renderer.render(scene, camera);' + trail + '\n' +
+    indent + '  try { renderer.render(scene, camera); }' + trail + '\n' +
+    indent + '  catch (e) { if (!GameGlobal.__fatalErr) { GameGlobal.__fatalErr = "render: " + String(e && (e.stack || e.message || e)); console.error("[3d]", e); } }' + trail + '\n' +
     indent + '}' + trail + '\n' +
-    indent + 'if (GameGlobal.__ui) GameGlobal.__ui.draw(renderer);');
+    /* UI 叠加层只依赖 hud 本身，不依赖 pages.js 是否挂上了 __ui：
+       后者一旦在启动期抛异常，整块 UI（底色 + 按钮 + 号码槽）都会消失，
+       而 3D 照常渲染，表现就是「画面只有上半截机器、下半一片空白」。
+       再包一层 try/catch：单帧绘制异常不能打断 rAF 主循环。 */
+    /* UI 绘制抛异常时把 3D 背景染红：小游戏没有控制台面板，
+       开发者工具的 console 通道也可能断，屏幕是唯一可靠的报错出口。 */
+    indent + 'if (GameGlobal.__hud) {' + trail + '\n' +
+    indent + '  try { GameGlobal.__hud.draw(renderer); }' + trail + '\n' +
+    indent + '  catch (e) { if (!GameGlobal.__uiErr) { GameGlobal.__uiErr = String(e); console.error("[ui]", e); try { scene.background.setHex(0xd50000); } catch (e2) {} } }' + trail + '\n' +
+    indent + '}');
 
   write(path.join(SRC, 'game-logic.js'), AUTO + s);
 }
